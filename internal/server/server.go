@@ -15,7 +15,7 @@ type DocumentService interface {
 }
 
 // New returns the HTTP handler for the Gopad server.
-func New(services ...DocumentService) http.Handler {
+func New(dependencies ...any) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -23,9 +23,18 @@ func New(services ...DocumentService) http.Handler {
 	})
 
 	var service DocumentService
-	if len(services) > 0 {
-		service = services[0]
+	var websocketHandler http.Handler
+	for _, dependency := range dependencies {
+		if candidate, ok := dependency.(DocumentService); ok {
+			service = candidate
+		}
+		if candidate, ok := dependency.(http.Handler); ok {
+			websocketHandler = candidate
+		}
 	}
 	registerDocumentRoutes(mux, service)
+	if websocketHandler != nil {
+		mux.Handle("GET /ws/{slug}", websocketHandler)
+	}
 	return mux
 }

@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/local/gopad/internal/realtime"
 	"github.com/local/gopad/internal/server"
 	"github.com/local/gopad/internal/store"
 )
@@ -22,6 +23,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	hub := realtime.NewHub(database)
+	defer hub.Close()
 	defer func() {
 		if err := database.Close(); err != nil {
 			log.Printf("close database: %v", err)
@@ -30,7 +33,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:    ":8080",
-		Handler: server.New(database),
+		Handler: server.New(database, hub),
 	}
 
 	serverErr := make(chan error, 1)

@@ -208,15 +208,15 @@ git commit -m "feat(http): add document creation and static editor routes"
 - Consumes: CRDT and store interfaces from Tasks 2–3
 - Produces: `NewHub(store Store) *Hub`, `(*Hub).GetOrCreateRoom(context.Context, string) (*Room, error)`, `GET /ws/{slug}`
 
-- [ ] **Step 1: Implement the room and protocol**
+- [x] **Step 1: Implement the room and protocol**
 
 Define `Envelope{Type string, Payload json.RawMessage}` and typed `op`, `cursor`, `presence`, and `sync` payloads. Give each room one owner goroutine that only does in-memory state mutation (register/unregister/apply-op), a bounded per-client send queue, and a shared bounded fan-out worker pool per `gopad-architecture.md` §9.1 — **the event loop submits fan-out jobs and does not wait for them to complete** (see Global Constraints). Assign a monotonic per-document server sequence to each op distinct from CRDT `(counter, siteID)` order. Room eviction: a cancellable idle timer, defaulting to 45 seconds after the last client disconnects (configurable via `GOPAD_ROOM_IDLE_TIMEOUT`, injectable in tests), removing the room from the hub's `sync.Map` when it fires with zero clients still connected.
 
-- [ ] **Step 2: Implement the WebSocket transport**
+- [x] **Step 2: Implement the WebSocket transport**
 
 `GET /ws/{slug}` upgrades via `coder/websocket`, resolves the room through `Hub.GetOrCreateRoom`, and registers the connection. Enforce a 16 KiB read limit, ping/pong keepalive with read-deadline reset on pong, a write deadline on the writePump, and proper close frames on shutdown or error.
 
-- [ ] **Step 3: Add room and transport tests**
+- [x] **Step 3: Add room and transport tests**
 
 With fake clients and a fake store: assert monotonic per-document sequence assignment, sender exclusion from its own broadcast, FIFO delivery per client, slow-client removal without stalling others, one room instance per slug (`GetOrCreateRoom` idempotence), and eviction firing at the configured timeout under a test-injected clock — with zero clients required at fire time, not just at trigger time.
 
@@ -227,7 +227,12 @@ With `coder/websocket` test clients against `httptest.Server`: open two connecti
 Run: `go test -race ./internal/realtime ./internal/server -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+The focused and full regular suites plus `go vet ./...` pass locally. The local
+race run is blocked because this Windows environment has no C compiler for
+`CGO_ENABLED=1`; the GitHub Actions workflow remains the verification path for
+the race-enabled suite.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add go.mod go.sum internal/realtime internal/server/server.go

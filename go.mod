@@ -2,7 +2,10 @@ module github.com/local/gopad
 
 go 1.22.0
 
-require modernc.org/sqlite v1.34.5
+require (
+	github.com/coder/websocket v1.8.12
+	modernc.org/sqlite v1.34.5
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
