@@ -145,12 +145,12 @@ Translate the three tables and index from `gopad-schema.md` (`users`, `documents
 
 Use `t.TempDir()` and assert: slugs are exactly 12 characters, base62, case-sensitive unique; `PRAGMA journal_mode` returns `wal`; recovery after snapshot + post-snapshot operation replay reproduces the same CRDT text (per `gopad-schema.md` §5 room startup/recovery flow).
 
-- [ ] **Step 3: Verify persistence**
+- [x] **Step 3: Verify persistence**
 
 Run: `go test -race ./internal/store -v`
 Expected: PASS, including restart recovery.
 
-The regular persistence suite and full `go test ./...` plus `go vet ./...` pass locally. The race-enabled store suite will be confirmed by the GitHub Actions CGO workflow.
+The regular persistence suite and full `go test ./...` plus `go vet ./...` pass locally. The GitHub Actions CGO workflow passed the race-enabled store suite.
 
 - [x] **Step 4: Commit**
 
@@ -222,15 +222,13 @@ With fake clients and a fake store: assert monotonic per-document sequence assig
 
 With `coder/websocket` test clients against `httptest.Server`: open two connections, assert the second receives an initial `sync`, then receives a subsequent `op` broadcast from the first.
 
-- [ ] **Step 4: Verify transport and races**
+- [x] **Step 4: Verify transport and races**
 
 Run: `go test -race ./internal/realtime ./internal/server -v`
 Expected: PASS.
 
-The focused and full regular suites plus `go vet ./...` pass locally. The local
-race run is blocked because this Windows environment has no C compiler for
-`CGO_ENABLED=1`; the GitHub Actions workflow remains the verification path for
-the race-enabled suite.
+The focused and full regular suites plus `go vet ./...` pass locally. The
+GitHub Actions CGO workflow passed the race-enabled transport and server suites.
 
 - [x] **Step 5: Commit**
 
