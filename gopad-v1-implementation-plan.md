@@ -36,11 +36,11 @@
 **Interfaces:**
 - Produces: `server.New() http.Handler`
 
-- [ ] **Step 1: Initialize the module**
+- [x] **Step 1: Initialize the module**
 
 Run: `go mod init github.com/local/gopad`
 
-- [ ] **Step 2: Implement the minimal server**
+- [x] **Step 2: Implement the minimal server**
 
 ```go
 func New() http.Handler {
@@ -55,11 +55,11 @@ func New() http.Handler {
 
 Wire `main.go` to `http.Server{Addr: ":8080", Handler: server.New()}` with signal-aware graceful shutdown (listen for `SIGINT`/`SIGTERM`, call `Shutdown(ctx)` with a bounded timeout).
 
-- [ ] **Step 3: Verify it runs**
+- [x] **Step 3: Verify it runs**
 
 Run: `go run ./cmd/gopad` and confirm `curl localhost:8080/healthz` returns `ok`.
 
-- [ ] **Step 4: Add tests covering the health endpoint**
+- [x] **Step 4: Add tests covering the health endpoint**
 
 ```go
 func TestHealthz_ReturnsOK(t *testing.T) {
@@ -72,12 +72,12 @@ func TestHealthz_ReturnsOK(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Format and verify**
+- [x] **Step 5: Format and verify**
 
 Run: `gofmt -w cmd internal && go test ./... && go vet ./...`
 Expected: all commands pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add go.mod cmd/gopad/main.go internal/server
