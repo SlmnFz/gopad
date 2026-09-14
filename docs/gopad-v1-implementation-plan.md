@@ -93,11 +93,11 @@ git commit -m "feat(server): add HTTP service foundation"
 **Interfaces:**
 - Produces: `CharID`, `Operation`, `New() *Document`, `(*Document).Apply(Operation) error`, `(*Document).Text() string`, `(*Document).Snapshot() []Char`
 
-- [ ] **Step 1: Implement the RGA document**
+- [x] **Step 1: Implement the RGA document**
 
 Store characters by ID, retain `LeftID`, sort siblings deterministically with `(Counter, SiteID)`, recursively emit descendants for traversal, and skip deleted values only in `Text()` (tombstones stay in the underlying structure — deletes flag, never remove, per Global Constraints). Reject conflicting duplicate IDs and deletes of unknown IDs with typed errors rather than panicking.
 
-- [ ] **Step 2: Add convergence and edge-case tests**
+- [x] **Step 2: Add convergence and edge-case tests**
 
 ```go
 func TestDocument_ConcurrentSiblingsConverge(t *testing.T) {
@@ -116,6 +116,8 @@ Add cases for insert-after, delete tombstones, duplicate idempotence, missing pa
 
 Run: `go test -race ./internal/crdt -v`
 Expected: PASS.
+
+Regular CRDT tests and `go vet ./...` pass. The local race-enabled command is pending because this environment does not have the `gcc` compiler required by cgo; `.github/workflows/ci.yml` runs the same check on Ubuntu with CGO enabled.
 
 - [ ] **Step 4: Commit**
 
