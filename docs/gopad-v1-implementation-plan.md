@@ -112,14 +112,14 @@ func TestDocument_ConcurrentSiblingsConverge(t *testing.T) {
 
 Add cases for insert-after, delete tombstones, duplicate idempotence, missing parents, and Unicode runes.
 
-- [ ] **Step 3: Verify convergence and races**
+- [x] **Step 3: Verify convergence and races**
 
 Run: `go test -race ./internal/crdt -v`
 Expected: PASS.
 
-Regular CRDT tests and `go vet ./...` pass. The local race-enabled command is pending because this environment does not have the `gcc` compiler required by cgo; `.github/workflows/ci.yml` runs the same check on Ubuntu with CGO enabled.
+Regular CRDT tests and `go vet ./...` pass locally. The GitHub Actions run passed the race-enabled suite on Ubuntu with CGO enabled.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/crdt
@@ -137,11 +137,11 @@ git commit -m "feat(crdt): add convergent RGA document"
 - Consumes: `crdt.Operation`, `crdt.Char`
 - Produces: `Open(path string) (*Store, error)`, `CreateDocument(context.Context) (Document, error)`, `AppendOperations(context.Context, int64, []crdt.Operation) error`, `SaveSnapshot(context.Context, int64, []crdt.Char, int64) error`, `LoadDocument(context.Context, string) (LoadedDocument, error)`
 
-- [ ] **Step 1: Implement schema and store**
+- [x] **Step 1: Implement schema and store**
 
 Translate the three tables and index from `gopad-schema.md` (`users`, `documents`, `operations`) into the migration file. Use separate read/write `*sql.DB` handles per `gopad-architecture.md` §9.3: `SetMaxOpenConns(1)` on the write handle (fed only by the eventual batching writer from Task 8), a normal multi-connection pool for reads. Generate slugs with `crypto/rand` as 12-character base62. Store operation payloads as JSON. Wrap each appended batch in one transaction.
 
-- [ ] **Step 2: Add persistence and recovery tests**
+- [x] **Step 2: Add persistence and recovery tests**
 
 Use `t.TempDir()` and assert: slugs are exactly 12 characters, base62, case-sensitive unique; `PRAGMA journal_mode` returns `wal`; recovery after snapshot + post-snapshot operation replay reproduces the same CRDT text (per `gopad-schema.md` §5 room startup/recovery flow).
 
@@ -150,7 +150,9 @@ Use `t.TempDir()` and assert: slugs are exactly 12 characters, base62, case-sens
 Run: `go test -race ./internal/store -v`
 Expected: PASS, including restart recovery.
 
-- [ ] **Step 4: Commit**
+The regular persistence suite and full `go test ./...` plus `go vet ./...` pass locally. The race-enabled store suite will be confirmed by the GitHub Actions CGO workflow.
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/store
