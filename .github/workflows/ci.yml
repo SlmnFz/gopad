@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go tests with race detector
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify formatting
+        shell: bash
+        run: test -z "$(gofmt -l cmd internal)"
+
+      - name: Run tests with race detector
+        run: go test -race ./...
+
+      - name: Run vet
+        run: go vet ./...
