@@ -4,20 +4,20 @@
 
 Gopad is a design-first repository. Root documents define the intended implementation:
 
-- `gopad-spec.md`: user flows, WebSocket protocol, CRDT behavior, and milestones.
-- `gopad-architecture.md`: Go server, room concurrency, persistence, scaling, and observability.
-- `gopad-schema.md`: SQLite tables, connection handshake, snapshots, and operation replay.
-- `gopad-v1-implementation-plan.md`: the approved, task-level implementation plan.
+- `docs/gopad-spec.md`: user flows, WebSocket protocol, CRDT behavior, and milestones.
+- `docs/gopad-architecture.md`: Go server, room concurrency, persistence, scaling, and observability.
+- `docs/gopad-schema.md`: SQLite tables, connection handshake, snapshots, and operation replay.
+- `docs/gopad-v1-implementation-plan.md`: the approved, task-level implementation plan.
 
 When implementation begins, keep Go commands under `cmd/gopad`, server packages under `internal/`, browser files under `web/`, migrations under `internal/store/migrations/`, and load tests under `loadtest/`. Keep CRDT, persistence, realtime rooms, and HTTP delivery as separate packages.
 
 ## Build Order
 
-Implementation follows `gopad-v1-implementation-plan.md` task by task, in final-shape order: server foundation → CRDT → SQLite store → document HTTP API → realtime rooms/WebSocket transport → browser CRDT client → presence → write batching/observability. There is no separate throwaway "dumb broadcast, no CRDT" milestone — the transport and concurrency plumbing (room lifecycle, sequencing, WebSocket handling) is validated with fakes and integration tests in its own task before the browser CRDT client lands, so the naive-first approach isn't needed to de-risk networking separately from CRDT correctness.
+Implementation follows `docs/gopad-v1-implementation-plan.md` task by task, in final-shape order: server foundation → CRDT → SQLite store → document HTTP API → realtime rooms/WebSocket transport → browser CRDT client → presence → write batching/observability. There is no separate throwaway "dumb broadcast, no CRDT" milestone — the transport and concurrency plumbing (room lifecycle, sequencing, WebSocket handling) is validated with fakes and integration tests in its own task before the browser CRDT client lands, so the naive-first approach isn't needed to de-risk networking separately from CRDT correctness.
 
 Each task in the plan is implemented, then verified (run it, confirm behavior), then covered with tests, in that order — not test-first. See the plan's own header for the exact workflow.
 
-Do not add sharded rooms across multiple processes, a pub/sub bus, or Postgres migration while v1 is in progress — those are explicit stretch goals in `gopad-architecture.md` §5.3 and §4.2, not part of this build.
+Do not add sharded rooms across multiple processes, a pub/sub bus, or Postgres migration while v1 is in progress — those are explicit stretch goals in `docs/gopad-architecture.md` §5.3 and §4.2, not part of this build.
 
 ## Build, Test, and Development Commands
 
