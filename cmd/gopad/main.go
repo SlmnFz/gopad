@@ -11,15 +11,26 @@ import (
 	"time"
 
 	"github.com/local/gopad/internal/server"
+	"github.com/local/gopad/internal/store"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	database, err := store.Open("gopad.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			log.Printf("close database: %v", err)
+		}
+	}()
+
 	httpServer := &http.Server{
 		Addr:    ":8080",
-		Handler: server.New(),
+		Handler: server.New(database),
 	}
 
 	serverErr := make(chan error, 1)

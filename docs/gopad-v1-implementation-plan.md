@@ -173,20 +173,20 @@ git commit -m "feat(store): persist documents operations and snapshots"
 - Consumes: `Store.CreateDocument(context.Context)`
 - Produces: `POST /documents`, `GET /`, `GET /d/{slug}`
 
-- [ ] **Step 1: Implement handlers and pages**
+- [x] **Step 1: Implement handlers and pages**
 
 Embed `web/` with `//go:embed`. `POST /documents` decodes no request body, calls `CreateDocument`, returns `201` with `application/json` body `{"slug":"..."}` via `json.NewEncoder`. `GET /` serves the landing/creation page; its button posts to `/documents` and redirects to `/d/{slug}`. `GET /d/{slug}` validates the slug against `^[0-9A-Za-z]{12}$` before any store lookup and returns `404` for malformed or unknown slugs.
 
-- [ ] **Step 2: Add HTTP behavior tests**
+- [x] **Step 2: Add HTTP behavior tests**
 
 Cover: `POST /documents` returns `201`/JSON/valid slug; `GET /` serves the creation page; valid document paths serve the editor; malformed or missing slugs return `404`.
 
-- [ ] **Step 3: Verify HTTP behavior**
+- [x] **Step 3: Verify HTTP behavior**
 
 Run: `go test ./internal/server -v`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/server web

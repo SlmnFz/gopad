@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gopad — collaborative plain text</title>
+    <link rel="stylesheet" href="/assets/style.css">
+  </head>
+  <body>
+    <main class="page-shell landing">
+      <p class="eyebrow">Gopad</p>
+      <h1>A shared space for plain text.</h1>
+      <p class="lede">Create a document, share its link, and edit together in real time.</p>
+      <button id="create-document" class="primary-button" type="button">New document</button>
+      <p id="status" class="status" role="status"></p>
+    </main>
+    <script>
+      const button = document.querySelector('#create-document');
+      const status = document.querySelector('#status');
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        status.textContent = 'Creating document…';
+        try {
+          const response = await fetch('/documents', { method: 'POST' });
+          if (!response.ok) throw new Error('create failed');
+          const { slug } = await response.json();
+          window.location.href = `/d/${slug}`;
+        } catch {
+          button.disabled = false;
+          status.textContent = 'Could not create a document. Please try again.';
+        }
+      });
+    </script>
+  </body>
+</html>
