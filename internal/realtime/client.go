@@ -6,11 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/local/gopad/internal/crdt"
+	"github.com/local/gopad/internal/store"
 )
 
 const (
@@ -22,11 +25,14 @@ const (
 
 // Client represents one browser connection and its bounded outbound queue.
 type Client struct {
-	conn   *websocket.Conn
-	send   chan []byte
-	done   chan struct{}
-	room   *Room
-	siteID string
+	conn     *websocket.Conn
+	send     chan []byte
+	done     chan struct{}
+	room     *Room
+	siteID   string
+	userID   int64
+	username string
+	color    string
 
 	closeOnce sync.Once
 }
@@ -42,9 +48,12 @@ func newWebSocketClient(connection *websocket.Conn, queueSize int) *Client {
 
 func newTestClient(queueSize int) *Client {
 	return &Client{
-		send:   make(chan []byte, queueSize),
-		done:   make(chan struct{}),
-		siteID: newSiteID(),
+		send:     make(chan []byte, queueSize),
+		done:     make(chan struct{}),
+		siteID:   newSiteID(),
+		userID:   1,
+		username: "Test",
+		color:    "#4dd8c0",
 	}
 }
 
@@ -81,6 +90,12 @@ func (c *Client) close() {
 }
 
 func (c *Client) serve(ctx context.Context, room *Room) {
+	if c.conn != nil {
+		if err := c.readHello(ctx, room.hub.store); err != nil {
+			c.close()
+			return
+		}
+	}
 	room.Register(c)
 	if c.conn == nil {
 		return
@@ -90,6 +105,45 @@ func (c *Client) serve(ctx context.Context, room *Room) {
 	c.readLoop(ctx, room)
 	c.close()
 	room.Unregister(c)
+}
+
+func (c *Client) readHello(ctx context.Context, database Store) error {
+	userStore, ok := database.(interface {
+		FindOrCreateUser(context.Context, string) (store.User, error)
+	})
+	if !ok {
+		return errors.New("store does not support user identity")
+	}
+	c.conn.SetReadLimit(maxWebSocketMessageSize)
+	_, data, err := c.conn.Read(ctx)
+	if err != nil {
+		return fmt.Errorf("read hello: %w", err)
+	}
+	var envelope Envelope
+	if err := json.Unmarshal(data, &envelope); err != nil || envelope.Type != MessageHello {
+		return errors.New("first message must be hello")
+	}
+	var payload HelloPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		return fmt.Errorf("decode hello: %w", err)
+	}
+	user, err := userStore.FindOrCreateUser(ctx, strings.TrimSpace(payload.Username))
+	if err != nil {
+		return fmt.Errorf("find user: %w", err)
+	}
+	c.userID = user.ID
+	c.username = user.Username
+	c.color = user.Color
+	return nil
+}
+
+func (c *Client) identity() PresenceIdentity {
+	return PresenceIdentity{
+		UserID:   c.userID,
+		Username: c.username,
+		Color:    c.color,
+		SiteID:   c.siteID,
+	}
 }
 
 func (c *Client) writeLoop(ctx context.Context) {
@@ -144,15 +198,21 @@ func (c *Client) readLoop(ctx context.Context, room *Room) {
 			c.sendError("invalid message")
 			continue
 		}
-		if envelope.Type != MessageOp {
-			continue
+		switch envelope.Type {
+		case MessageOp:
+			var payload OperationPayload
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				c.sendError("invalid operation")
+				continue
+			}
+			room.SubmitOperation(c, payload.Operation)
+		case MessageCursor:
+			var payload CursorPayload
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				continue
+			}
+			room.SubmitCursor(c, payload)
 		}
-		var payload OperationPayload
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			c.sendError("invalid operation")
-			continue
-		}
-		room.SubmitOperation(c, payload.Operation)
 	}
 }
 

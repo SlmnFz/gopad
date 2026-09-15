@@ -26,6 +26,13 @@ const (
 type Store interface {
 	LoadDocument(context.Context, string) (store.LoadedDocument, error)
 	AppendOperations(context.Context, int64, []crdt.Operation) error
+	FindOrCreateUser(context.Context, string) (store.User, error)
+}
+
+// AttributedOperationStore is optional for compatible test stores; the real
+// SQLite store uses it to attach each operation to the active username.
+type AttributedOperationStore interface {
+	AppendOperationsForUser(context.Context, int64, int64, []crdt.Operation) error
 }
 
 // HubConfig controls room lifecycle and bounded realtime queues.

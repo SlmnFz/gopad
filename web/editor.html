@@ -21,9 +21,13 @@
       <section class="editor-panel" aria-label="Collaborative document">
         <div class="panel-bar" aria-hidden="true">
           <span>DOCUMENT CHANNEL</span>
+          <span id="presence-status">0 COLLABORATORS</span>
           <span>/// ENCRYPTION: NONE / V1</span>
         </div>
-        <textarea id="editor" class="editor" aria-label="Document text" placeholder="Start writing…" disabled></textarea>
+        <div class="editor-stage">
+          <textarea id="editor" class="editor" aria-label="Document text" placeholder="Start writing…" disabled></textarea>
+          <div id="remote-cursors" class="remote-cursors" aria-hidden="true"></div>
+        </div>
       </section>
       <footer class="editor-footer" aria-hidden="true">
         <span>LINK-SHARED ACCESS</span>

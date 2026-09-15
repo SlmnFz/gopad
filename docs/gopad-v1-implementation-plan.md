@@ -293,20 +293,24 @@ git commit -m "feat(editor): add optimistic CRDT editing and reconnect"
 - Consumes: cursor messages expressed with adjacent CRDT `CharID` values
 - Produces: join/leave/name/color broadcasts, collaborator count, remote caret labels
 
-- [ ] **Step 1: Implement ephemeral presence**
+- [x] **Step 1: Implement ephemeral presence**
 
 Find-or-create the user by username (per `gopad-schema.md` §1/§4) and assign a stable stored color at creation time, reused across sessions. Broadcast active-user snapshots on join/leave; never persist `cursor` or `presence` messages (they skip the DB entirely, per `gopad-architecture.md` §3.3). Throttle browser cursor sends to 50ms. Render remote carets in an overlay aligned to a textarea mirror element, anchored to CRDT `CharID`s rather than raw offsets so they stay correct as the document changes underneath them.
 
-- [ ] **Step 2: Add presence tests**
+- [x] **Step 2: Add presence tests**
 
 Server-side: joins and leaves update the active list without touching the store; cursor messages from the same user coalesce (latest wins) rather than queuing. Browser-side: cursor anchors remain attached to the correct character after a concurrent insert shifts surrounding text.
 
-- [ ] **Step 3: Verify presence**
+- [x] **Step 3: Verify presence**
 
 Run: `go test -race ./internal/realtime -v && node --test web/assets/*.test.js`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+The eight browser CRDT/presence tests, full Go suite, and `go vet ./...` pass
+locally. The local race run is blocked by the missing Windows C compiler for
+`CGO_ENABLED=1`; GitHub Actions remains the race-verification path.
+
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/realtime web

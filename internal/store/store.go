@@ -20,6 +20,17 @@ const (
 	systemUserID int64 = 1
 )
 
+var userColors = []string{
+	"#4dd8c0",
+	"#7aa2f7",
+	"#bb9af7",
+	"#f7768e",
+	"#e0af68",
+	"#9ece6a",
+	"#7dcfff",
+	"#ff9e64",
+}
+
 //go:embed migrations/001_initial.sql
 var migrationFS embed.FS
 
@@ -42,6 +53,13 @@ type Document struct {
 	Title           string
 	Snapshot        []crdt.Char
 	SnapshotVersion int64
+}
+
+// User is the username-only identity shown in presence and attached to edits.
+type User struct {
+	ID       int64
+	Username string
+	Color    string
 }
 
 // OperationRecord is one persisted operation after a document snapshot.
@@ -149,6 +167,61 @@ func (s *Store) Close() error {
 	return errors.Join(errs...)
 }
 
+// FindOrCreateUser returns the globally unique, case-insensitive username
+// record. Colors are assigned once and remain stable across sessions.
+func (s *Store) FindOrCreateUser(ctx context.Context, username string) (User, error) {
+	if s == nil || s.writeDB == nil {
+		return User{}, errors.New("store is not open")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		username = "Anonymous"
+	}
+	if len([]rune(username)) > 64 {
+		return User{}, errors.New("username cannot exceed 64 characters")
+	}
+
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return User{}, fmt.Errorf("begin user transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var user User
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, username, color
+		FROM users
+		WHERE username = ?
+	`, username).Scan(&user.ID, &user.Username, &user.Color)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return User{}, fmt.Errorf("find user: %w", err)
+	}
+
+	var userCount int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
+		return User{}, fmt.Errorf("count users: %w", err)
+	}
+	user = User{Username: username, Color: userColors[(userCount-1)%len(userColors)]}
+	result, err := tx.ExecContext(ctx, `
+		INSERT INTO users (username, color)
+		VALUES (?, ?)
+	`, user.Username, user.Color)
+	if err != nil {
+		return User{}, fmt.Errorf("create user: %w", err)
+	}
+	user.ID, err = result.LastInsertId()
+	if err != nil {
+		return User{}, fmt.Errorf("read user ID: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return User{}, fmt.Errorf("commit user: %w", err)
+	}
+	return user, nil
+}
+
 // CreateDocument creates a document with a cryptographically random base62
 // slug. Collisions are retried because the slug is the v1 access mechanism.
 func (s *Store) CreateDocument(ctx context.Context) (Document, error) {
@@ -162,7 +235,7 @@ func (s *Store) CreateDocument(ctx context.Context) (Document, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	for attempt := 0; attempt < 10; attempt++ {
+	for range 10 {
 		slug, err := randomSlug()
 		if err != nil {
 			return Document{}, err
@@ -193,11 +266,24 @@ func (s *Store) CreateDocument(ctx context.Context) (Document, error) {
 // per-document server sequence numbers. Task 7 will add authenticated user
 // attribution; until then operations use the seeded system user.
 func (s *Store) AppendOperations(ctx context.Context, documentID int64, operations []crdt.Operation) error {
+	return s.appendOperations(ctx, documentID, systemUserID, operations)
+}
+
+// AppendOperationsForUser stores operations with the connected user's
+// attribution while preserving the CRDT site ID from each operation.
+func (s *Store) AppendOperationsForUser(ctx context.Context, documentID, userID int64, operations []crdt.Operation) error {
+	return s.appendOperations(ctx, documentID, userID, operations)
+}
+
+func (s *Store) appendOperations(ctx context.Context, documentID, userID int64, operations []crdt.Operation) error {
 	if len(operations) == 0 {
 		return nil
 	}
 	if s == nil || s.writeDB == nil {
 		return errors.New("store is not open")
+	}
+	if userID <= 0 {
+		userID = systemUserID
 	}
 
 	tx, err := s.writeDB.BeginTx(ctx, nil)

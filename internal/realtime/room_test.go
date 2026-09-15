@@ -33,6 +33,13 @@ func (s *testStore) CreateDocument(context.Context) (store.Document, error) {
 	return s.document.Document, nil
 }
 
+func (s *testStore) FindOrCreateUser(_ context.Context, username string) (store.User, error) {
+	if username == "" {
+		username = "Test"
+	}
+	return store.User{ID: 1, Username: username, Color: "#4dd8c0"}, nil
+}
+
 func (s *testStore) LoadDocument(_ context.Context, slug string) (store.LoadedDocument, error) {
 	if slug != s.document.Slug {
 		return store.LoadedDocument{}, store.ErrDocumentNotFound
@@ -97,6 +104,7 @@ func TestRoom_AssignsSequencesAndBroadcastsFIFOWithoutEcho(t *testing.T) {
 	room.Register(receiver)
 	assertSync(t, readTestEnvelope(t, sender))
 	assertSync(t, readTestEnvelope(t, receiver))
+	assertPresence(t, readTestEnvelope(t, sender))
 
 	firstID := crdt.CharID{SiteID: "sender", Counter: 1}
 	secondID := crdt.CharID{SiteID: "sender", Counter: 2}
@@ -151,11 +159,131 @@ func TestRoom_RemovesSlowClientWithoutStallingSender(t *testing.T) {
 	}
 }
 
+func TestRoom_PresenceJoinLeaveSnapshotsDoNotPersist(t *testing.T) {
+	database := newTestStore()
+	hub := NewHubWithConfig(database, HubConfig{
+		IdleTimeout:     time.Hour,
+		ClientQueueSize: 8,
+		FanoutQueueSize: 8,
+		FanoutWorkers:   1,
+	})
+	defer hub.Close()
+
+	room, err := hub.GetOrCreateRoom(context.Background(), testDocumentSlug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := identifiedTestClient(1, "Alice", "#4dd8c0")
+	bob := identifiedTestClient(2, "Bob", "#7aa2f7")
+	room.Register(alice)
+	assertSync(t, readTestEnvelope(t, alice))
+	room.Register(bob)
+
+	secondSync := decodeSyncPayload(t, readTestEnvelope(t, bob))
+	if len(secondSync.Presence) != 2 {
+		t.Fatalf("sync presence count = %d, want 2", len(secondSync.Presence))
+	}
+	join := decodePresencePayload(t, readTestEnvelope(t, alice))
+	if join.Event != "join" || len(join.Active) != 2 || join.User.Username != "Bob" {
+		t.Fatalf("join payload = %#v, want Bob and two active users", join)
+	}
+
+	room.Unregister(bob)
+	leave := decodePresencePayload(t, readTestEnvelope(t, alice))
+	if leave.Event != "leave" || len(leave.Active) != 1 || leave.User.Username != "Bob" {
+		t.Fatalf("leave payload = %#v, want Bob and one active user", leave)
+	}
+	database.mu.Lock()
+	defer database.mu.Unlock()
+	if len(database.appends) != 0 {
+		t.Fatalf("presence changed persisted operations: %#v", database.appends)
+	}
+}
+
+func TestRoom_CursorUpdatesCoalesceBeforeDispatch(t *testing.T) {
+	database := newTestStore()
+	hub := NewHubWithConfig(database, HubConfig{
+		IdleTimeout:     time.Hour,
+		ClientQueueSize: 8,
+		FanoutQueueSize: 8,
+		FanoutWorkers:   1,
+	})
+	defer hub.Close()
+
+	loaded := database.document
+	document := crdt.New()
+	room := newRoom(hub, testDocumentSlug, loaded.ID, document, 0, nil)
+	client := identifiedTestClient(1, "Alice", "#4dd8c0")
+	first := CursorPayload{Start: CursorAnchor{}, End: CursorAnchor{}}
+	latest := CursorPayload{
+		Start: CursorAnchor{LeftID: &crdt.CharID{SiteID: "site", Counter: 2}},
+		End:   CursorAnchor{LeftID: &crdt.CharID{SiteID: "site", Counter: 2}},
+	}
+	room.SubmitCursor(client, first)
+	room.SubmitCursor(client, latest)
+
+	room.cursorMu.Lock()
+	pending := room.pendingCursors[client]
+	queued := room.cursorQueued[client]
+	room.cursorMu.Unlock()
+	if !queued || len(room.commands) != 1 {
+		t.Fatalf("cursor command was queued more than once: queued=%t commands=%d", queued, len(room.commands))
+	}
+	if pending.Start.LeftID == nil || *pending.Start.LeftID != *latest.Start.LeftID {
+		t.Fatalf("pending cursor = %#v, want latest update %#v", pending, latest)
+	}
+
+	go room.run(hub.ctx)
+	room.shutdown()
+	select {
+	case <-room.Done():
+	case <-time.After(time.Second):
+		t.Fatal("test room did not shut down")
+	}
+}
+
+func identifiedTestClient(userID int64, username, color string) *Client {
+	client := newTestClient(8)
+	client.userID = userID
+	client.username = username
+	client.color = color
+	return client
+}
+
 func assertSync(t *testing.T, envelope Envelope) {
 	t.Helper()
 	if envelope.Type != MessageSync {
 		t.Fatalf("message type = %q, want %q", envelope.Type, MessageSync)
 	}
+}
+
+func assertPresence(t *testing.T, envelope Envelope) {
+	t.Helper()
+	if envelope.Type != MessagePresence {
+		t.Fatalf("message type = %q, want %q", envelope.Type, MessagePresence)
+	}
+}
+
+func decodeSyncPayload(t *testing.T, envelope Envelope) SyncPayload {
+	t.Helper()
+	assertSync(t, envelope)
+	var payload SyncPayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		t.Fatalf("decode sync payload: %v", err)
+	}
+	return payload
+}
+
+func decodePresencePayload(t *testing.T, envelope Envelope) PresencePayload {
+	t.Helper()
+	if envelope.Type != MessagePresence {
+		t.Fatalf("message type = %q, want %q", envelope.Type, MessagePresence)
+	}
+	var payload PresencePayload
+	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+		t.Fatalf("decode presence payload: %v", err)
+	}
+	return payload
 }
 
 func decodeOperationPayload(t *testing.T, envelope Envelope) OperationPayload {

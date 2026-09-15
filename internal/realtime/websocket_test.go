@@ -32,6 +32,7 @@ func TestWebSocket_SecondClientReceivesSyncAndBroadcast(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close(websocket.StatusNormalClosure, "test complete")
+	sendHello(t, first, "Alice")
 	assertSync(t, readWebSocketEnvelope(t, first))
 
 	second, _, err := websocket.Dial(context.Background(), websocketURL, nil)
@@ -39,6 +40,7 @@ func TestWebSocket_SecondClientReceivesSyncAndBroadcast(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer second.Close(websocket.StatusNormalClosure, "test complete")
+	sendHello(t, second, "Bob")
 	assertSync(t, readWebSocketEnvelope(t, second))
 
 	operation := crdt.Operation{
@@ -63,6 +65,19 @@ func TestWebSocket_SecondClientReceivesSyncAndBroadcast(t *testing.T) {
 	}
 	if payload.Operation != operation {
 		t.Fatalf("operation = %#v, want %#v", payload.Operation, operation)
+	}
+}
+
+func sendHello(t *testing.T, connection *websocket.Conn, username string) {
+	t.Helper()
+	message, err := marshalEnvelope(MessageHello, HelloPayload{Username: username})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeContext, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := connection.Write(writeContext, websocket.MessageText, message); err != nil {
+		t.Fatal(err)
 	}
 }
 

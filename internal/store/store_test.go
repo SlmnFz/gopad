@@ -136,6 +136,25 @@ func TestStore_LoadMissingDocument(t *testing.T) {
 	}
 }
 
+func TestStore_FindOrCreateUserKeepsUsernameAndColorStable(t *testing.T) {
+	store := openTestStore(t)
+
+	first, err := store.FindOrCreateUser(context.Background(), "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.FindOrCreateUser(context.Background(), " alice ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("case-insensitive lookup changed user: first=%#v second=%#v", first, second)
+	}
+	if first.Color == "" {
+		t.Fatal("created user has no stable color")
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(filepath.Join(t.TempDir(), "gopad.db"))
