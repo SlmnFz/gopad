@@ -13,7 +13,7 @@ ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/gopad ./cmd/gopad
 RUN mkdir -p /out/data
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM scratch
 
 COPY --from=builder /out/gopad /gopad
 COPY --from=builder --chown=65532:65532 /out/data /data
@@ -23,5 +23,5 @@ ENV GOPAD_ADDR=:8080 \
 
 VOLUME ["/data"]
 EXPOSE 8080
-USER nonroot:nonroot
+USER 65532:65532
 ENTRYPOINT ["/gopad"]
