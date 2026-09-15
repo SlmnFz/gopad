@@ -529,3 +529,47 @@ Add a "Running with Docker" section to `README.md`: `docker compose up --build`,
 git add Dockerfile .dockerignore docker-compose.yml deploy internal/metrics README.md
 git commit -m "feat(ops): dockerize gopad and add Prometheus/Grafana stack"
 ```
+
+### Task 13: Tombstone compaction tied to the snapshot cycle
+ 
+**Files:**
+- Modify: `internal/crdt/document.go`
+- Modify: `internal/store/writer.go`
+- Modify: `internal/realtime/room.go`
+- Modify: `internal/metrics/metrics.go`
+- Test: `internal/crdt/document_test.go`
+- Test: `internal/store/writer_test.go`
+- Test: `internal/realtime/room_test.go`
+- Modify: `internal/crdt/bench_test.go`
+- Modify: `internal/crdt/BENCHMARKS.md`
+- Modify: `deploy/grafana/dashboards/gopad.json` (optional — only if a compaction panel is added)
+**Interfaces:**
+- Consumes: `crdt.Document` from Task 2, the writer's snapshot lifecycle from Task 8, the per-document server sequence from Task 5
+- Produces: `(*Document).Compact(ids []CharID) (purged int, err error)`, a writer-driven "compact after every Nth snapshot" hook, `gopad_tombstones_compacted_total` counter
+- [ ] **Step 1: Add safe tombstone removal to the CRDT document**
+`Compact(ids []CharID)` removes only entries that are already tombstoned — attempting to compact a still-live character or an unknown ID is rejected per-ID (return which IDs were skipped, don't error the whole batch) rather than panicking, mirroring Task 2's typed-error convention. This is the only method in the package that actually deletes structure rather than tombstoning it, so it stays narrowly scoped: no bulk "compact everything older than X" logic lives here — the caller (Step 3) decides exactly which IDs are safe and hands over the list.
+ 
+- [ ] **Step 2: Define and document the safety window**
+The real risk: a client can have an in-flight `Insert` whose `LeftID` points at a character that was live in that client's local view moments ago but has since been deleted by someone else and, if compacted too soon, purged before the in-flight op arrives — which would surface as a spurious "missing parent" error and silently drop that character. There's no vector-clock-style causal-stability tracking in v1 (that's real complexity this hobby project doesn't need given the architecture), so instead use a heuristic grace window sized well beyond realistic message latency: only compact tombstones that were *already tombstoned as of the snapshot before last* (snapshot k-1, when compacting after snapshot k) — never the most recent one. Given Task 8's snapshot cadence (≥30s or 1,000 ops), this leaves at least one full snapshot interval of margin, orders of magnitude larger than any realistic WebSocket round-trip. Document this explicitly as a heuristic, not a proof, in a comment on `Compact` and in `BENCHMARKS.md`. Note why reconnecting or newly-joining clients are unaffected regardless: Task 6's `sync` always replaces local state wholesale from the current snapshot, so a client can never hold a reference to a character it was never sent.
+ 
+- [ ] **Step 3: Wire compaction into the writer's snapshot cycle**
+After `SaveSnapshot` succeeds in the writer (Task 8), compute the set of character IDs that were already tombstoned in the *previous* successful snapshot and haven't been purged yet, and hand that list to the room's event-loop goroutine to apply via `Document.Compact` — matching Task 8's existing split of "expensive work off the loop, state mutation on the loop." Increment `gopad_tombstones_compacted_total` (new counter in `internal/metrics`) by the returned `purged` count so the effect is visible on the Task 12 dashboard.
+ 
+- [ ] **Step 4: Add CRDT-level compaction tests**
+Cover: compacting a live (non-tombstoned) ID is a no-op for that ID, not an error for the whole call; compacting an unknown ID behaves the same way; `Text()` is byte-identical before and after compaction, since compaction only ever touches already-invisible tombstones; a subsequent `Apply` of an `Insert` whose `LeftID` references a purged ID returns the existing typed "missing parent" error from Task 2 rather than panicking — this confirms the failure mode, if the grace window is ever undersized, degrades to a clean rejection rather than corruption.
+ 
+- [ ] **Step 5: Add writer and room tests for the grace window and concurrency safety**
+Writer test: given a sequence of snapshots, compaction after snapshot k only targets tombstones present as of snapshot k-1, never k's own newly-created tombstones. Room test, under `-race`: compaction is applied on the room's own event-loop goroutine and never races with concurrently arriving client ops — assert no data race and no dropped op when a client op and a compaction request are submitted back-to-back.
+ 
+- [ ] **Step 6: Extend the Task 11 benchmarks to show the flattened curve**
+Add a compacted variant to `bench_test.go`: run the same 1k/10k/100k/1M workloads at 30%/70% delete ratios but with compaction applied every couple of simulated snapshot cycles, and record the results in `BENCHMARKS.md` directly beside the uncompacted baseline from Task 11 — the side-by-side comparison, showing the earlier superlinear growth flattening out, is the actual point of this task and the payoff for the work in Task 11.
+ 
+- [ ] **Step 7: Verify**
+Run: `go test -race ./internal/crdt ./internal/store ./internal/realtime -v` and `go test ./internal/crdt -bench=. -benchmem -run=^$`.
+Expected: all suites PASS under `-race`; benchmark comparison shows compacted workloads scaling noticeably better than Task 11's uncompacted baseline at 100k/1M.
+ 
+- [ ] **Step 8: Commit**
+```bash
+git add internal/crdt internal/store internal/realtime internal/metrics deploy
+git commit -m "feat(crdt): compact stable tombstones after each snapshot cycle"
+```
