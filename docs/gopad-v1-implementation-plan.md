@@ -575,11 +575,11 @@ Writer test: given a sequence of snapshots, compaction after snapshot k only tar
 - [x] **Step 6: Extend the Task 11 benchmarks to show the flattened curve**
 Add a compacted variant to `bench_test.go`: run the same 1k/10k/100k/1M workloads at 30%/70% delete ratios but with compaction applied every couple of simulated snapshot cycles, and record the results in `BENCHMARKS.md` directly beside the uncompacted baseline from Task 11 — the side-by-side comparison, showing the earlier superlinear growth flattening out, is the actual point of this task and the payoff for the work in Task 11.
  
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 Run: `go test -race ./internal/crdt ./internal/store ./internal/realtime -v` and `go test ./internal/crdt -bench=. -benchmem -run=^$`.
 Expected: all suites PASS under `-race`; benchmark comparison shows compacted workloads scaling noticeably better than Task 11's uncompacted baseline at 100k/1M.
  
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 ```bash
 git add internal/crdt internal/store internal/realtime internal/metrics deploy
 git commit -m "feat(crdt): compact stable tombstones after each snapshot cycle"
