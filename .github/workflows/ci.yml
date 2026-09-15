@@ -46,3 +46,22 @@ jobs:
 
       - name: Run browser tests
         run: node --test web/assets/*.test.js
+
+  fuzz:
+    name: CRDT fuzz smoke test
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run bounded CRDT fuzzing
+        run: go test ./internal/crdt -fuzz=FuzzTwoReplicaConverge -fuzztime=60s
