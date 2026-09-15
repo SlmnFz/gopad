@@ -884,6 +884,17 @@ h1 {
   white-space: nowrap;
 }
 
+/* Decryption is a reveal effect, not a color transition. */
+.decrypt-target[data-decrypting],
+.history-text[data-decrypting] {
+  color: inherit;
+  text-shadow: inherit;
+}
+
+.decrypt-target[data-decrypting]::after {
+  color: currentColor;
+}
+
 body.history-active {
   overflow: hidden;
 }
