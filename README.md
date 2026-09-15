@@ -85,8 +85,14 @@ The local observability stack starts Gopad, Prometheus, and Grafana with the
 configuration already wired together:
 
 ~~~powershell
+Copy-Item .env.example .env
 docker compose up --build
 ~~~
+
+Edit `.env` first if the default ports are already in use. The example covers
+the published app, Prometheus, and Grafana ports, all supported Gopad runtime
+settings, and the local Grafana login. `.env` is ignored by Git; never commit
+real credentials.
 
 - App: <http://localhost:8080>
 - Prometheus: <http://localhost:9090>
@@ -113,6 +119,11 @@ All settings are optional:
 | GOPAD_SNAPSHOT_OP_THRESHOLD | 1000 | Operations that trigger a snapshot copy |
 | GOPAD_SNAPSHOT_INTERVAL | 30s | Maximum snapshot interval for dirty rooms |
 | GOPAD_ENABLE_PPROF | unset | Enables pprof on loopback-only 127.0.0.1:6060 |
+
+Docker Compose also accepts `GOPAD_HTTP_PORT`, `PROMETHEUS_PORT`, and
+`GRAFANA_PORT` for host-side port mappings, plus `GRAFANA_ADMIN_USER`,
+`GRAFANA_ADMIN_PASSWORD`, and `GRAFANA_ALLOW_SIGN_UP` for the local Grafana
+instance. See [.env.example](.env.example) for a complete starting point.
 
 GET /healthz is the lightweight readiness check. GET /metrics exposes the
 canonical Prometheus metrics for connections, rooms, operations, fan-out
