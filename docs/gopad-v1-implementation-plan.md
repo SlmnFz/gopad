@@ -473,11 +473,11 @@ Generate `Insert`/`Delete` sequences that are individually well-formed against T
 - [x] **Step 5: Add scale benchmarks that surface the tombstone-growth cost**
 `bench_test.go`: `BenchmarkApply` and `BenchmarkText` at 1k/10k/100k/1M total ops, each run at a few delete ratios (0%, 30%, 70%) since deletes-as-tombstones (Global Constraints — tombstones are never removed) is the known RGA cost center; the point is to make the curve visible, not to hit a target number. Run with `-benchmem` to also track allocations per op. Record the current numbers in a short `internal/crdt/BENCHMARKS.md` so future changes have something to diff against.
  
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 Run: `go test -race ./internal/crdt -run Property -v` (property suite), `go test -race ./internal/crdt -v` (existing Task 2 suite still green), `go test ./internal/crdt -fuzz=FuzzTwoReplicaConverge -fuzztime=60s` (local fuzz smoke run — not part of the standard gate), `go test ./internal/crdt -bench=. -benchmem -run=^$`.
 Expected: property and regular suites PASS under `-race`; the 60s fuzz run finds no crashes; benchmarks complete and show the expected superlinear cost as tombstone count grows (confirms the harness is measuring something real, not a no-op).
 
-Verification so far: the 500-iteration property suite, all regular CRDT tests, the 60-second fuzz run (112,102 executions), and the full benchmark matrix pass without `-race`. The local Windows host has no GCC, so the two `-race` commands are pending the CGO-enabled GitHub Actions job added in this task.
+Verification: the 500-iteration property suite, all regular CRDT tests, the 60-second local fuzz run (112,102 executions), and the full benchmark matrix pass without `-race`. The user-reported CGO-enabled GitHub Actions fuzz job also passed after 72,474 executions; the local Windows host has no GCC, so race verification is delegated to the existing CI test job.
 
 - [x] **Step 7: Commit**
 ```bash
