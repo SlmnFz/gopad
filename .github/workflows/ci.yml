@@ -84,7 +84,7 @@ jobs:
           echo "$metrics"
           echo "$metrics" | grep -q 'gopad_operations_total'
           curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:9090/-/ready
-          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:3000/api/health
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors http://127.0.0.1:3000/api/health
 
       - name: Show Compose logs on failure
         if: failure()
