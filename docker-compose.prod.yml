@@ -1,0 +1,9 @@
+services:
+  gopad:
+    restart: unless-stopped
+
+  prometheus:
+    restart: unless-stopped
+
+  grafana:
+    restart: unless-stopped

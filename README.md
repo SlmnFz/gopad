@@ -14,7 +14,7 @@ Share a link, open the document, and edit together in real time. Gopad keeps
 the collaboration layer deliberately small and understandable: Go, vanilla
 HTML/CSS/JavaScript, WebSockets, an RGA-style CRDT, and SQLite.
 
-[Try the demo](https://slmnfz.github.io/gopad/) · [Read the docs](docs/README.md) · [Contribute](CONTRIBUTING.md)
+[Try the demo](https://gopad.iamchandler.ir/) · [Read the docs](docs/README.md) · [Contribute](CONTRIBUTING.md)
 
 </div>
 
@@ -181,6 +181,17 @@ arrive within the configured 500ms round-trip threshold.
 - [Database schema](docs/gopad-schema.md) — SQLite tables, handshake, snapshots, and recovery.
 - [v1 implementation plan](docs/gopad-v1-implementation-plan.md) — ordered tasks and verification.
 - [Documentation index](docs/README.md)
+
+## Continuous delivery
+
+The repository includes a production CD workflow at
+[`.github/workflows/cd.yml`](.github/workflows/cd.yml). After CI passes on
+`main`, it publishes the tested commit to GHCR and deploys the immutable image
+to the configured server over SSH. The workflow uses a GitHub `production`
+environment, so approvals can be required before the restart.
+
+See [the deployment guide](docs/deployment.md) for the one-time server setup,
+required secrets, GHCR access, and rollback procedure.
 
 ## Open-source project
 
