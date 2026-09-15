@@ -18,6 +18,7 @@ const (
 	commandUnregister
 	commandOperation
 	commandCursor
+	commandCompact
 	commandShutdown
 )
 
@@ -27,6 +28,7 @@ type roomCommand struct {
 	operation    crdt.Operation
 	clientSentAt int64
 	cursor       CursorPayload
+	compactIDs   []crdt.CharID
 }
 
 // Room serializes all canonical CRDT mutation through one owner goroutine.
@@ -150,6 +152,8 @@ func (r *Room) run(ctx context.Context) {
 				r.applyOperation(ctx, command.client, command.operation, command.clientSentAt)
 			case commandCursor:
 				r.applyCursor(command.client)
+			case commandCompact:
+				r.applyCompaction(command.compactIDs)
 			case commandShutdown:
 				r.requestSnapshot()
 				r.closeClients()
@@ -310,6 +314,27 @@ func (r *Room) requestSnapshot() {
 	}
 	if r.hub.writer.EnqueueSnapshot(r.documentID, r.document.Snapshot(), r.sequence) {
 		r.opsSinceSnapshot = 0
+	}
+}
+
+func (r *Room) applyCompaction(ids []crdt.CharID) {
+	purged, err := r.document.Compact(ids)
+	if err == nil && purged > 0 {
+		r.hub.metrics.AddTombstonesCompacted(purged)
+	}
+}
+
+func (r *Room) submitCompaction(ids []crdt.CharID) {
+	if len(ids) == 0 {
+		return
+	}
+	command := roomCommand{kind: commandCompact, compactIDs: append([]crdt.CharID(nil), ids...)}
+	select {
+	case r.commands <- command:
+	case <-r.done:
+	default:
+		// Compaction is an optimization. If the bounded room queue is full,
+		// leave the tombstones for the next snapshot cycle.
 	}
 }
 

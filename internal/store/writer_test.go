@@ -52,6 +52,17 @@ type fakeWriterObserver struct {
 	batches []int
 }
 
+type fakeSnapshotObserver struct {
+	mu    sync.Mutex
+	calls [][]crdt.CharID
+}
+
+func (observer *fakeSnapshotObserver) SnapshotSaved(_ int64, ids []crdt.CharID, _ int64) {
+	observer.mu.Lock()
+	observer.calls = append(observer.calls, append([]crdt.CharID(nil), ids...))
+	observer.mu.Unlock()
+}
+
 func (observer *fakeWriterObserver) SetWriteQueueDepth(depth int) {
 	observer.mu.Lock()
 	observer.depth = depth
@@ -181,6 +192,58 @@ func TestWriterCoalescesPendingSnapshots(t *testing.T) {
 	defer executor.mu.Unlock()
 	if len(executor.snapshots) != 1 || executor.snapshots[0].version != 2 {
 		t.Fatalf("snapshots = %#v, want one latest snapshot", executor.snapshots)
+	}
+}
+
+func TestWriterNotifiesTombstonesFromPreviousSuccessfulSnapshot(t *testing.T) {
+	executor := &fakeWriterExecutor{}
+	observer := &fakeSnapshotObserver{}
+	clock := newFakeWriterClock()
+	writer := NewWriterWithConfig(executor, WriterConfig{
+		QueueSize:        8,
+		Clock:            clock,
+		SnapshotObserver: observer,
+	})
+	defer closeWriter(t, writer)
+	<-clock.ready
+
+	first := crdt.Char{ID: crdt.CharID{SiteID: "site", Counter: 1}, Value: 'A', Deleted: true}
+	second := crdt.Char{ID: crdt.CharID{SiteID: "site", Counter: 2}, Value: 'B', Deleted: true}
+	if !writer.EnqueueSnapshot(7, []crdt.Char{first}, 1) {
+		t.Fatal("first snapshot was rejected")
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	observer.mu.Lock()
+	if len(observer.calls) != 0 {
+		t.Fatalf("first snapshot callbacks = %#v, want none", observer.calls)
+	}
+	observer.mu.Unlock()
+
+	if !writer.EnqueueSnapshot(7, []crdt.Char{first, second}, 2) {
+		t.Fatal("second snapshot was rejected")
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !writer.EnqueueSnapshot(7, []crdt.Char{first, second}, 3) {
+		t.Fatal("third snapshot was rejected")
+	}
+	if err := writer.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if len(observer.calls) != 2 {
+		t.Fatalf("snapshot callbacks = %#v, want two", observer.calls)
+	}
+	if len(observer.calls[0]) != 1 || observer.calls[0][0] != first.ID {
+		t.Fatalf("second snapshot callback = %#v, want first tombstone only", observer.calls[0])
+	}
+	if len(observer.calls[1]) != 2 || observer.calls[1][0] != first.ID || observer.calls[1][1] != second.ID {
+		t.Fatalf("third snapshot callback = %#v, want both prior tombstones", observer.calls[1])
 	}
 }
 

@@ -13,7 +13,7 @@ Covers the hub/room structure, HTTP/WebSocket handling, persistence write path, 
 Goroutines are cheap (~2-4KB stack, grows on demand) — the "2 goroutines per connection + 1 per active room" pattern scales to hundreds of thousands of goroutines without goroutines themselves being the bottleneck. The real single-node constraints:
 
 - **File descriptors**: each WebSocket connection is a socket. Raise OS limits (`ulimit -n`, and the container/systemd equivalent) if targeting 10k+ concurrent connections.
-- **Memory per room**: each `Room` holds an in-memory canonical CRDT (full char list + tombstones) + client registry. Small per-room for text docs, but measure at scale with many thousands of simultaneously-live rooms rather than assuming.
+- **Memory per room**: each `Room` holds an in-memory canonical CRDT (live chars plus tombstones inside the compaction safety window) + client registry. Tombstone compaction bounds deleted-character retention without changing the durable operation log.
 - **Broadcast fan-out cost**: a room with N clients means every op triggers N sends. Fine at doc-editing scale (5-10 concurrent editors per doc). A "many viewers on one doc" pattern (more like a webinar) would need a different broadcast strategy (dedicated fan-out pool, or batched-flush-per-tick instead of per-keystroke) — not a v1 concern, but worth naming as a different problem shape.
 
 ## 3. Hub → sharded room registry
@@ -163,7 +163,7 @@ func fanoutWorker(jobs <-chan FanoutJob) {
 
 ### 9.2 Snapshot triggering — debounced background goroutine, deep-copy handoff
 
-Snapshotting (serializing the full CRDT state, including tombstones, to `documents.snapshot`) is comparatively expensive (full walk + JSON marshal) and must never run on the event-loop goroutine.
+Snapshotting (serializing the retained CRDT state, including tombstones still inside the compaction safety window, to `documents.snapshot`) is comparatively expensive (full walk + JSON marshal) and must never run on the event-loop goroutine.
 
 **Design**: a dedicated snapshot goroutine per active room, triggered by a debounced signal channel plus a time-based fallback.
 
@@ -259,4 +259,4 @@ These v1 tuning values are fixed and configurable only where noted:
 
 - Room idle-eviction grace period: 45 seconds, via `GOPAD_ROOM_IDLE_TIMEOUT`.
 - Operation write flush: 100 operations or 250ms, via `GOPAD_OP_BATCH_SIZE` and `GOPAD_OP_FLUSH_INTERVAL`.
-- Snapshot trigger: 1,000 operations or 30 seconds. Snapshot signals are coalesced in a buffered size-one queue; snapshots rewrite `documents.snapshot` while operation batches append to `operations`.
+- Snapshot trigger: 1,000 operations or 30 seconds. Snapshot signals are coalesced in a buffered size-one queue; snapshots rewrite `documents.snapshot` while operation batches append to `operations`. After a successful snapshot, the writer asks the room owner to compact tombstones that were present in the previous successful snapshot.

@@ -276,6 +276,45 @@ func TestRoom_CursorUpdatesCoalesceBeforeDispatch(t *testing.T) {
 	}
 }
 
+func TestRoom_CompactionRunsOnOwnerAndPreservesFollowingOperation(t *testing.T) {
+	hub := NewHubWithConfig(newTestStore(), HubConfig{
+		IdleTimeout:     time.Hour,
+		ClientQueueSize: 8,
+		FanoutQueueSize: 8,
+		FanoutWorkers:   1,
+	})
+	defer hub.Close()
+
+	deletedID := crdt.CharID{SiteID: "site", Counter: 1}
+	document := crdt.New()
+	if err := document.Apply(crdt.Operation{Type: crdt.Insert, ID: deletedID, Value: 'A'}); err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Apply(crdt.Operation{Type: crdt.Delete, ID: deletedID}); err != nil {
+		t.Fatal(err)
+	}
+	room := newRoom(hub, testDocumentSlug, 7, document, 0, nil)
+	go room.run(hub.ctx)
+
+	room.SubmitOperation(nil, crdt.Operation{
+		Type:  crdt.Insert,
+		ID:    crdt.CharID{SiteID: "site", Counter: 2},
+		Value: 'B',
+	})
+	room.submitCompaction([]crdt.CharID{deletedID})
+	room.shutdown()
+	select {
+	case <-room.Done():
+	case <-time.After(time.Second):
+		t.Fatal("room did not shut down")
+	}
+
+	snapshot := room.document.Snapshot()
+	if len(snapshot) != 1 || snapshot[0].Value != 'B' {
+		t.Fatalf("snapshot after compaction = %#v, want one live B", snapshot)
+	}
+}
+
 func identifiedTestClient(userID int64, username, color string) *Client {
 	client := newTestClient(8)
 	client.userID = userID

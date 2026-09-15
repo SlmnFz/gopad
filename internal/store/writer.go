@@ -49,6 +49,13 @@ type WriterObserver interface {
 	ObserveWriteBatch(int, time.Duration)
 }
 
+// SnapshotObserver receives successful snapshots after they are durable. The
+// realtime package uses this hook to request compaction on the room owner
+// goroutine rather than mutating a document from the writer goroutine.
+type SnapshotObserver interface {
+	SnapshotSaved(documentID int64, tombstoneIDs []crdt.CharID, version int64)
+}
+
 // Timer and Clock make batching tests deterministic without changing the
 // production time source.
 type Timer interface {
@@ -83,6 +90,7 @@ type WriterConfig struct {
 	OperationBatchSize  int
 	OperationFlushDelay time.Duration
 	Observer            WriterObserver
+	SnapshotObserver    SnapshotObserver
 	Clock               Clock
 }
 
@@ -178,6 +186,10 @@ type Writer struct {
 	closeOnce sync.Once
 	closeMu   sync.Mutex
 	closeErr  error
+
+	snapshotObserverMu    sync.RWMutex
+	snapshotObserver      SnapshotObserver
+	previousSnapshotTombs map[int64][]crdt.CharID
 }
 
 // NewWriter creates a production writer using the default thresholds.
@@ -201,14 +213,27 @@ func NewWriterWithConfig(executor WriterExecutor, config WriterConfig) *Writer {
 		config.Clock = defaults.Clock
 	}
 	writer := &Writer{
-		executor:        executor,
-		config:          config,
-		jobs:            make(chan writerJob, config.QueueSize),
-		done:            make(chan struct{}),
-		pendingSnapshot: make(map[int64]snapshotJob),
+		executor:              executor,
+		config:                config,
+		jobs:                  make(chan writerJob, config.QueueSize),
+		done:                  make(chan struct{}),
+		pendingSnapshot:       make(map[int64]snapshotJob),
+		previousSnapshotTombs: make(map[int64][]crdt.CharID),
+		snapshotObserver:      config.SnapshotObserver,
 	}
 	go writer.run()
 	return writer
+}
+
+// SetSnapshotObserver connects a room registry after construction. This is
+// intentionally optional so small in-memory test writers remain standalone.
+func (writer *Writer) SetSnapshotObserver(observer SnapshotObserver) {
+	if writer == nil {
+		return
+	}
+	writer.snapshotObserverMu.Lock()
+	writer.snapshotObserver = observer
+	writer.snapshotObserverMu.Unlock()
 }
 
 // EnqueueOps adds operations to the bounded queue. It returns false when the
@@ -389,8 +414,23 @@ func (writer *Writer) run() {
 		snapshots := writer.takeSnapshots()
 		var firstErr error
 		for _, snapshot := range snapshots {
-			if err := writer.executor.SaveSnapshot(context.Background(), snapshot.documentID, snapshot.chars, snapshot.version); err != nil && firstErr == nil {
-				firstErr = err
+			if err := writer.executor.SaveSnapshot(context.Background(), snapshot.documentID, snapshot.chars, snapshot.version); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			previous := writer.previousSnapshotTombs[snapshot.documentID]
+			current := tombstoneIDs(snapshot.chars)
+			writer.previousSnapshotTombs[snapshot.documentID] = current
+			if len(previous) == 0 {
+				continue
+			}
+			writer.snapshotObserverMu.RLock()
+			observer := writer.snapshotObserver
+			writer.snapshotObserverMu.RUnlock()
+			if observer != nil {
+				observer.SnapshotSaved(snapshot.documentID, append([]crdt.CharID(nil), previous...), snapshot.version)
 			}
 		}
 		return firstErr
@@ -517,4 +557,14 @@ func cloneChars(chars []crdt.Char) []crdt.Char {
 		}
 	}
 	return copyOfChars
+}
+
+func tombstoneIDs(chars []crdt.Char) []crdt.CharID {
+	ids := make([]crdt.CharID, 0)
+	for _, char := range chars {
+		if char.Deleted {
+			ids = append(ids, char.ID)
+		}
+	}
+	return ids
 }

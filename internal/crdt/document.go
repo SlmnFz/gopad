@@ -145,6 +145,29 @@ func (d *Document) applyDelete(id CharID) error {
 	return nil
 }
 
+// Compact permanently removes the supplied tombstones from the CRDT
+// structure. Live and unknown IDs are ignored so a stale compaction request
+// cannot affect the document or fail a whole batch.
+//
+// Callers must only pass tombstones that have been present in a previously
+// successful snapshot. This heuristic safety window leaves one complete
+// snapshot interval for in-flight operations to arrive; it is a practical
+// latency margin, not a causal-stability proof.
+func (d *Document) Compact(ids []CharID) (purged int, err error) {
+	if d == nil {
+		return 0, ErrInvalidOperation
+	}
+	for _, id := range ids {
+		char, ok := d.chars[id]
+		if !ok || !char.Deleted {
+			continue
+		}
+		delete(d.chars, id)
+		purged++
+	}
+	return purged, nil
+}
+
 // Text returns the visible document text, excluding tombstones.
 func (d *Document) Text() string {
 	var text []rune

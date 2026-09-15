@@ -121,7 +121,7 @@ func NewHubWithConfig(database Store, config HubConfig) *Hub {
 	if config.SlugCache == nil {
 		config.SlugCache = cache.DefaultSlugCache()
 	}
-	return &Hub{
+	hub := &Hub{
 		store:     database,
 		config:    config,
 		fanout:    newFanoutPool(config.FanoutWorkers, config.FanoutQueueSize),
@@ -130,6 +130,26 @@ func NewHubWithConfig(database Store, config HubConfig) *Hub {
 		metrics:   config.Metrics,
 		slugCache: config.SlugCache,
 	}
+	if setter, ok := hub.writer.(interface{ SetSnapshotObserver(store.SnapshotObserver) }); ok {
+		setter.SetSnapshotObserver(hub)
+	}
+	return hub
+}
+
+// SnapshotSaved routes a successful writer snapshot back to its room without
+// touching the room's CRDT outside the room owner goroutine.
+func (h *Hub) SnapshotSaved(documentID int64, tombstoneIDs []crdt.CharID, _ int64) {
+	if h == nil || len(tombstoneIDs) == 0 {
+		return
+	}
+	h.rooms.Range(func(_, value any) bool {
+		room := value.(*Room)
+		if room.documentID == documentID {
+			room.submitCompaction(tombstoneIDs)
+			return false
+		}
+		return true
+	})
 }
 
 // GetOrCreateRoom loads a document and returns its one active room instance.

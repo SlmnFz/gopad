@@ -30,6 +30,23 @@ func BenchmarkApply(b *testing.B) {
 	}
 }
 
+func BenchmarkApplyCompacted(b *testing.B) {
+	for _, total := range benchmarkSizes {
+		for _, deleteRatio := range benchmarkDeleteRatios[1:] {
+			operations := benchmarkOperations(total, deleteRatio)
+			name := fmt.Sprintf("ops=%d/deletes=%d%%", total, deleteRatio)
+			b.Run(name, func(b *testing.B) {
+				b.ReportAllocs()
+				b.ReportMetric(float64(total), "ops/workload")
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					benchmarkApplyWithCompaction(operations)
+				}
+			})
+		}
+	}
+}
+
 func BenchmarkText(b *testing.B) {
 	for _, total := range benchmarkSizes {
 		for _, deleteRatio := range benchmarkDeleteRatios {
@@ -51,6 +68,47 @@ func BenchmarkText(b *testing.B) {
 			})
 		}
 	}
+}
+
+func BenchmarkTextCompacted(b *testing.B) {
+	for _, total := range benchmarkSizes {
+		for _, deleteRatio := range benchmarkDeleteRatios[1:] {
+			operations := benchmarkOperations(total, deleteRatio)
+			document := benchmarkApplyWithCompaction(operations)
+			name := fmt.Sprintf("ops=%d/deletes=%d%%", total, deleteRatio)
+			b.Run(name, func(b *testing.B) {
+				b.ReportAllocs()
+				b.ReportMetric(float64(total), "ops/workload")
+				b.ResetTimer()
+				for iteration := 0; iteration < b.N; iteration++ {
+					_ = document.Text()
+				}
+			})
+		}
+	}
+}
+
+func benchmarkApplyWithCompaction(operations []Operation) *Document {
+	document := New()
+	previousTombstones := []CharID(nil)
+	currentTombstones := []CharID(nil)
+	cycleSize := len(operations) / 4
+	if cycleSize == 0 {
+		cycleSize = 1
+	}
+	for index, operation := range operations {
+		if err := document.Apply(operation); err != nil {
+			panic(err)
+		}
+		if operation.Type == Delete {
+			currentTombstones = append(currentTombstones, operation.ID)
+		}
+		if (index+1)%cycleSize == 0 {
+			_, _ = document.Compact(previousTombstones)
+			previousTombstones = append(previousTombstones[:0], currentTombstones...)
+		}
+	}
+	return document
 }
 
 func benchmarkOperations(total, deleteRatio int) []Operation {

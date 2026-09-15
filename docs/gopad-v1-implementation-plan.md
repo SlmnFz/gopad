@@ -388,7 +388,7 @@ git commit -m "feat(ops): add durable batching metrics and load testing"
 ```
 
 ### Task 9: In-process TTL cache for hot document lookups
- 
+
 **Files:**
 - Create: `internal/cache/cache.go`
 - Test: `internal/cache/cache_test.go`
@@ -400,27 +400,27 @@ git commit -m "feat(ops): add durable batching metrics and load testing"
 - Produces: `cache.New[K, V](ttl time.Duration, maxEntries int) *Cache[K, V]`, `(*Cache[K, V]).Get(key K) (V, bool)`, `(*Cache[K, V]).Set(key K, value V)`, `(*Cache[K, V]).Delete(key K)`, `(*Cache[K, V]).Len() int`
 - [x] **Step 1: Implement a generic in-memory TTL cache**
 A single `internal/cache` package, no external deps. Backing store is a `map[K]entry[V]` guarded by a `sync.RWMutex`, `entry` holds `value V` and `expiresAt time.Time`. `Get` checks expiry lazily on read (an expired-but-not-yet-swept entry is treated as a miss) rather than relying solely on a sweeper. A background goroutine sweeps expired entries every `ttl/2` (bounded, started in `New`, stopped via a `Close()` the caller defers) so a cold cache doesn't grow unbounded from misses that were never re-read. Enforce `maxEntries` with simple oldest-expiry eviction on `Set` — this is a size backstop, not an LRU, so keep the eviction scan O(n) only on the rare overflow path, not the hot path.
- 
+
 - [x] **Step 2: Wire the cache into the hot lookup paths**
 Cache two things, each with its own instance and TTL so document-not-found results don't stick around as long as found ones: (a) `GET /d/{slug}` and `GET /ws/{slug}`'s "does this slug exist" check (short TTL, e.g. 5s — this is the per-request path hit on every page load and every reconnect), and (b) nothing from the write path — inserted/edited document *content* is never cached, since the room's in-memory CRDT is already the source of truth for anything live and the cache would just add a staleness bug. On `CreateDocument` success, do not pre-populate the cache; let the next read populate it, keeping the cache dumb (read-through, not write-through).
- 
+
 - [x] **Step 3: Add cache tests**
 Cover: `Get` on a missing key returns `(zero, false)`; entries expire after their TTL and are treated as misses even before the sweeper runs; `Set` past `maxEntries` evicts something rather than growing unbounded; concurrent `Get`/`Set` under `-race` don't corrupt state; `Close()` stops the sweeper goroutine (assert via a goroutine-count check or a closed-channel signal, not a sleep-and-hope).
- 
+
 - [ ] **Step 4: Verify**
 Run: `go test -race ./internal/cache ./internal/server ./internal/realtime -v`
 Expected: PASS, including the concurrent cache test under `-race`.
 
 Local non-race verification passes; the Windows host has no GCC for `-race`, so this verification is pending GitHub Actions.
- 
+
 - [x] **Step 5: Commit**
 ```bash
 git add internal/cache internal/server internal/realtime cmd
 git commit -m "feat(cache): add TTL cache for slug-existence lookups"
 ```
- 
+
 ### Task 10: Terminal-style editor theme and Persian (RTL) support
- 
+
 **Files:**
 - Modify: `web/assets/style.css`
 - Modify: `web/editor.html`
@@ -435,7 +435,7 @@ git commit -m "feat(cache): add TTL cache for slug-existence lookups"
 - Produces: theme CSS custom properties, a per-user direction toggle, `detectDirection(text)` helper, `renderAvatar(username, size) -> SVGElement`
 - [x] **Step 1: Build the terminal-noir theme**
 Restyle around CSS custom properties on `:root` — near-black background, phosphor-green primary text (`#33ff33`-ish, tuned for contrast against the Global Constraints' plain-text focus, not neon-glow-heavy), monospace stack (`ui-monospace, "SF Mono", "Cascadia Code", monospace`) for the editor and chrome alike. Subtle scanline/vignette treatment via a low-opacity repeating-linear-gradient overlay — cheap CSS, no canvas/JS, and disabled under `prefers-reduced-motion`/`prefers-contrast: more` for accessibility. Collaborator cursor colors (Task 7) must stay legible against the dark background — clamp assigned colors to a minimum lightness rather than using raw hash-derived hues. No frontend build system per Global Constraints — plain CSS custom properties, no preprocessor.
- 
+
 - [x] **Step 2: Add deterministic per-user SVG avatars**
 `avatar.js` exports `renderAvatar(username, size)`, pure and client-only — no server round trip, no new store table. Hash the username with a small FNV-1a implementation to get a 32-bit seed, feed it through a seeded PRNG (mulberry32 or similar, inlined — no new dependency), and derive a mirrored 5×5 geometric grid plus a background/foreground hue pair from the seed, matching the reference demo built earlier in this conversation. Reuse the same seed source as the stable per-user color from Task 7's presence system (derive both from the username hash) so a given collaborator's avatar and cursor color always agree. Render the avatar next to usernames in the collaborator list and next to remote cursor labels; keep it to the terminal theme's palette (clamp hue/lightness the same way cursor colors are clamped in Step 1) so avatars don't clash with the dark background.
  
@@ -557,22 +557,22 @@ git commit -m "feat(ops): dockerize gopad and add Prometheus/Grafana stack"
 **Interfaces:**
 - Consumes: `crdt.Document` from Task 2, the writer's snapshot lifecycle from Task 8, the per-document server sequence from Task 5
 - Produces: `(*Document).Compact(ids []CharID) (purged int, err error)`, a writer-driven "compact after every Nth snapshot" hook, `gopad_tombstones_compacted_total` counter
-- [ ] **Step 1: Add safe tombstone removal to the CRDT document**
+- [x] **Step 1: Add safe tombstone removal to the CRDT document**
 `Compact(ids []CharID)` removes only entries that are already tombstoned — attempting to compact a still-live character or an unknown ID is rejected per-ID (return which IDs were skipped, don't error the whole batch) rather than panicking, mirroring Task 2's typed-error convention. This is the only method in the package that actually deletes structure rather than tombstoning it, so it stays narrowly scoped: no bulk "compact everything older than X" logic lives here — the caller (Step 3) decides exactly which IDs are safe and hands over the list.
  
-- [ ] **Step 2: Define and document the safety window**
+- [x] **Step 2: Define and document the safety window**
 The real risk: a client can have an in-flight `Insert` whose adjacent anchor points at a character that was live in that client's local view moments ago but has since been deleted by someone else and, if compacted too soon, purged before the in-flight op arrives — which would surface as a spurious "missing parent" error and silently drop that character. There's no vector-clock-style causal-stability tracking in v1 (that's real complexity this hobby project doesn't need given the architecture), so instead use a heuristic grace window sized well beyond realistic message latency: only compact tombstones that were *already tombstoned as of the snapshot before last* (snapshot k-1, when compacting after snapshot k) — never the most recent one. Given Task 8's snapshot cadence (≥30s or 1,000 ops), this leaves at least one full snapshot interval of margin, orders of magnitude larger than any realistic WebSocket round-trip. Document this explicitly as a heuristic, not a proof, in a comment on `Compact` and in `BENCHMARKS.md`. Note why reconnecting or newly-joining clients are unaffected regardless: Task 6's `sync` always replaces local state wholesale from the current snapshot, so a client can never hold a reference to a character it was never sent.
  
-- [ ] **Step 3: Wire compaction into the writer's snapshot cycle**
+- [x] **Step 3: Wire compaction into the writer's snapshot cycle**
 After `SaveSnapshot` succeeds in the writer (Task 8), compute the set of character IDs that were already tombstoned in the *previous* successful snapshot and haven't been purged yet, and hand that list to the room's event-loop goroutine to apply via `Document.Compact` — matching Task 8's existing split of "expensive work off the loop, state mutation on the loop." Increment `gopad_tombstones_compacted_total` (new counter in `internal/metrics`) by the returned `purged` count so the effect is visible on the Task 12 dashboard.
  
-- [ ] **Step 4: Add CRDT-level compaction tests**
+- [x] **Step 4: Add CRDT-level compaction tests**
 Cover: compacting a live (non-tombstoned) ID is a no-op for that ID, not an error for the whole call; compacting an unknown ID behaves the same way; `Text()` is byte-identical before and after compaction, since compaction only ever touches already-invisible tombstones; a subsequent `Apply` of an `Insert` whose adjacent anchor references a purged ID returns the existing typed "missing parent" error from Task 2 rather than panicking — this confirms the failure mode, if the grace window is ever undersized, degrades to a clean rejection rather than corruption.
  
-- [ ] **Step 5: Add writer and room tests for the grace window and concurrency safety**
+- [x] **Step 5: Add writer and room tests for the grace window and concurrency safety**
 Writer test: given a sequence of snapshots, compaction after snapshot k only targets tombstones present as of snapshot k-1, never k's own newly-created tombstones. Room test, under `-race`: compaction is applied on the room's own event-loop goroutine and never races with concurrently arriving client ops — assert no data race and no dropped op when a client op and a compaction request are submitted back-to-back.
  
-- [ ] **Step 6: Extend the Task 11 benchmarks to show the flattened curve**
+- [x] **Step 6: Extend the Task 11 benchmarks to show the flattened curve**
 Add a compacted variant to `bench_test.go`: run the same 1k/10k/100k/1M workloads at 30%/70% delete ratios but with compaction applied every couple of simulated snapshot cycles, and record the results in `BENCHMARKS.md` directly beside the uncompacted baseline from Task 11 — the side-by-side comparison, showing the earlier superlinear growth flattening out, is the actual point of this task and the payoff for the work in Task 11.
  
 - [ ] **Step 7: Verify**
@@ -583,4 +583,49 @@ Expected: all suites PASS under `-race`; benchmark comparison shows compacted wo
 ```bash
 git add internal/crdt internal/store internal/realtime internal/metrics deploy
 git commit -m "feat(crdt): compact stable tombstones after each snapshot cycle"
+```
+
+### Task 14: Time-travel history scrubber
+ 
+**Files:**
+- Modify: `internal/store/store.go`
+- Create: `internal/history/replay.go`
+- Modify: `internal/realtime/room.go` (extract the existing snapshot+replay startup logic into the shared `internal/history` helper, no behavior change there)
+- Create: `internal/server/history.go`
+- Modify: `internal/cache/cache.go` usage in `internal/server/history.go` (reuse Task 9's cache, new instance)
+- Modify: `web/editor.html`
+- Create: `web/assets/history.js`
+- Modify: `web/assets/style.css`
+- Test: `internal/history/replay_test.go`
+- Test: `internal/server/history_test.go`
+- Test: `web/assets/history.test.js`
+**Interfaces:**
+- Consumes: the durable per-document operation log and periodic snapshots from Tasks 3/5/8 — note this reads the *durable op log*, not the in-memory `Document`, so Task 13's tombstone compaction (which only trims in-memory structure, never deletes persisted log rows) has zero effect on how far back history can go
+- Produces: `history.BuildAt(snapshot []crdt.Char, ops []crdt.Operation) (*crdt.Document, error)`, `GET /api/documents/{slug}/history/range`, `GET /api/documents/{slug}/history?seq=N`, `renderScrubber(container, slug)` client-side
+- [ ] **Step 1: Extend the store for historical range queries**
+Add `SnapshotBeforeSeq(slug string, seq int64) (chars []Char, snapSeq int64, err error)` — the most recent persisted snapshot at or before the requested sequence, falling back to an empty document if none exists yet (documents younger than their first snapshot interval) — and `OperationsInRange(slug string, fromSeq, toSeq int64) ([]Operation, error)`. Confirm the `operations` table already has an index on `(document_id, sequence)` from Task 3/5 — if not, add it here, since every history request is a range scan on exactly that shape.
+ 
+- [ ] **Step 2: Extract a shared replay helper**
+`internal/history.BuildAt` takes a snapshot's characters plus the ops after it and returns a reconstructed `*crdt.Document` — this is the exact logic the room already runs once at startup (Task 8) to rehydrate a document, so refactor that into this shared helper rather than duplicating it; the room calls it with `(latest snapshot, ops after it)`, this task calls it with `(nearest snapshot ≤ N, ops between that snapshot and N)`. No new reconstruction logic, just a new caller.
+ 
+- [ ] **Step 3: Add the history HTTP endpoints**
+`GET /api/documents/{slug}/history/range` returns `{minSeq, maxSeq, createdAt, currentSeq}` for the scrubber's bounds. `GET /api/documents/{slug}/history?seq=N` clamps `N` into `[minSeq, maxSeq]`, calls `store.SnapshotBeforeSeq` + `store.OperationsInRange` + `history.BuildAt`, and returns `{sequence, timestamp, text}`. This path never touches the live room's in-memory `Document` or its event-loop goroutine — it's a pure read from durable storage, so a burst of scrubbing by one visitor can't contend with or block active editors in that room.
+ 
+- [ ] **Step 4: Cache and rate-limit replay cost**
+Reuse Task 9's cache pattern with a new instance keyed by `(slug, seq)`, short TTL (a scrubber being dragged will re-request nearby sequences repeatedly). Since a request can, worst case, replay up to one full snapshot interval's worth of ops, add a per-IP rate limit on this endpoint alongside whatever general abuse limits exist — this is exactly the kind of amplification path (small request, comparatively expensive server-side work) that's worth capping explicitly rather than assuming good faith.
+ 
+- [ ] **Step 5: Build the scrubber UI**
+`history.js`: a slider bound to `[minSeq, maxSeq]` from the range endpoint, debounced (~150ms) fetch to the point endpoint as the user drags, rendering the returned text into a read-only panel visually distinct from the live editor — matching Task 10's terminal theme but with a clearly different treatment (e.g. dimmed/amber tint vs. the live green) so it's never ambiguous whether you're looking at history or the live document. Show the timestamp for the current scrub position and an explicit "return to live" action that unmounts the scrubber and hands focus back to the normal editor.
+ 
+- [ ] **Step 6: Add tests**
+`replay_test.go`: `BuildAt` reconstructs text that exactly matches what the live document produced at that point — the strongest version of this test replays a recorded op sequence from one of Task 11's property-test runs up to step k and asserts it matches a checkpoint taken during that run, tying this feature's correctness directly back to the convergence harness. `history_test.go`: range/point endpoints clamp out-of-bounds `seq` rather than erroring, and a request for a document with no snapshots yet still returns sensible bounds. `history.test.js`: slider drag debounces correctly and clamps to fetched bounds.
+ 
+- [ ] **Step 7: Verify**
+Run: `go test -race ./internal/history ./internal/server ./internal/store -v` and `node --test web/assets/*.test.js`.
+Expected: PASS; manually drag the scrubber on a document with real edit history and confirm the rendered text at each point matches what was actually on screen at that time.
+ 
+- [ ] **Step 8: Commit**
+```bash
+git add internal/store internal/history internal/realtime internal/server internal/cache web
+git commit -m "feat(history): add time-travel scrubber over the operation log"
 ```

@@ -125,7 +125,7 @@ Char = {
 
 ### 8.2 Delete = tombstone, not removal
 
-Deletes never actually remove a character from the structure — they set `deleted: true`. This preserves position references for any concurrent operation that might still reference that character as a `leftID` or `rightID`. Tombstones accumulate over time; garbage collection is a later optimization (possible here because the server is a central authority that can determine when it's safe to compact — out of scope for v1).
+Deletes initially set `deleted: true` rather than removing a character. This preserves position references for concurrent operations that might still reference that character as a `leftID` or `rightID`. After a successful snapshot, the writer may ask the room owner to compact tombstones that were already present in the previous successful snapshot. That one-snapshot grace window is a practical latency heuristic, not a causal-stability proof; the durable operation log is retained even when the in-memory CRDT structure is compacted.
 
 ### 8.3 Ordering / tiebreak rule
 

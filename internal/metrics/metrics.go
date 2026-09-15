@@ -41,6 +41,7 @@ func (histogram *histogram) observe(value float64) {
 //   - gopad_active_rooms (gauge)
 //   - gopad_operations_total (counter)
 //   - gopad_dropped_clients_total (counter)
+//   - gopad_tombstones_compacted_total (counter)
 //   - gopad_write_queue_dropped_total (counter)
 //   - gopad_write_queue_depth (gauge)
 //   - gopad_broadcast_latency_seconds (histogram)
@@ -49,12 +50,13 @@ func (histogram *histogram) observe(value float64) {
 type Metrics struct {
 	mu sync.Mutex
 
-	activeConnections int64
-	activeRooms       int64
-	operations        uint64
-	droppedClients    uint64
-	queueDropped      uint64
-	writeQueueDepth   int
+	activeConnections   int64
+	activeRooms         int64
+	operations          uint64
+	droppedClients      uint64
+	tombstonesCompacted uint64
+	queueDropped        uint64
+	writeQueueDepth     int
 
 	broadcastLatency  histogram
 	writeBatchSize    histogram
@@ -174,6 +176,15 @@ func (metrics *Metrics) IncDroppedClients() {
 	metrics.mu.Unlock()
 }
 
+func (metrics *Metrics) AddTombstonesCompacted(value int) {
+	if metrics == nil || value <= 0 {
+		return
+	}
+	metrics.mu.Lock()
+	metrics.tombstonesCompacted += uint64(value)
+	metrics.mu.Unlock()
+}
+
 // ServeHTTP exposes the metrics in the Prometheus text exposition format.
 func (metrics *Metrics) ServeHTTP(response http.ResponseWriter, _ *http.Request) {
 	if metrics == nil {
@@ -186,6 +197,7 @@ func (metrics *Metrics) ServeHTTP(response http.ResponseWriter, _ *http.Request)
 	fmt.Fprintf(&output, "# TYPE gopad_active_rooms gauge\ngopad_active_rooms %d\n", metrics.activeRooms)
 	fmt.Fprintf(&output, "# TYPE gopad_operations_total counter\ngopad_operations_total %d\n", metrics.operations)
 	fmt.Fprintf(&output, "# TYPE gopad_dropped_clients_total counter\ngopad_dropped_clients_total %d\n", metrics.droppedClients)
+	fmt.Fprintf(&output, "# TYPE gopad_tombstones_compacted_total counter\ngopad_tombstones_compacted_total %d\n", metrics.tombstonesCompacted)
 	fmt.Fprintf(&output, "# TYPE gopad_write_queue_dropped_total counter\ngopad_write_queue_dropped_total %d\n", metrics.queueDropped)
 	fmt.Fprintf(&output, "# TYPE gopad_write_queue_depth gauge\ngopad_write_queue_depth %d\n", metrics.writeQueueDepth)
 	writeHistogram(&output, "gopad_broadcast_latency_seconds", &metrics.broadcastLatency)

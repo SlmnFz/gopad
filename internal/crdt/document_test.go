@@ -59,6 +59,38 @@ func TestDocument_InsertAfterAndTombstoneDelete(t *testing.T) {
 	}
 }
 
+func TestDocument_CompactRemovesOnlyTombstones(t *testing.T) {
+	document := New()
+	liveID := CharID{SiteID: "site", Counter: 1}
+	deletedID := CharID{SiteID: "site", Counter: 2}
+	if err := document.Apply(Operation{Type: Insert, ID: liveID, Value: 'A'}); err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Apply(Operation{Type: Insert, ID: deletedID, Value: 'B', LeftID: &liveID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := document.Apply(Operation{Type: Delete, ID: deletedID}); err != nil {
+		t.Fatal(err)
+	}
+	before := document.Text()
+	purged, err := document.Compact([]CharID{liveID, deletedID, {SiteID: "missing", Counter: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purged != 1 {
+		t.Fatalf("purged = %d, want 1", purged)
+	}
+	if document.Text() != before {
+		t.Fatalf("text after compaction = %q, want %q", document.Text(), before)
+	}
+	if len(document.Snapshot()) != 1 {
+		t.Fatalf("snapshot length = %d, want one live character", len(document.Snapshot()))
+	}
+	if err := document.Apply(Operation{Type: Insert, ID: CharID{SiteID: "late", Counter: 1}, Value: 'C', LeftID: &deletedID}); !errors.Is(err, ErrMissingParent) {
+		t.Fatalf("insert after purged anchor error = %v, want missing parent", err)
+	}
+}
+
 func TestDocument_RightAnchorPreservesMiddleInsertion(t *testing.T) {
 	document := New()
 	a := CharID{SiteID: "base", Counter: 1}

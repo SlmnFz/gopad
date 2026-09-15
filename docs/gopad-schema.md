@@ -35,7 +35,7 @@ CREATE TABLE documents (
 ```
 
 Notes:
-- `snapshot` stores the **full serialized CRDT structure** (the list of `Char`s including tombstones, as JSON) — not just the plain-text rendering. This lets the server rebuild an in-memory canonical CRDT for a room on startup without replaying the entire op history from the beginning.
+- `snapshot` stores the **full serialized CRDT structure** currently retained by the room (including any tombstones still inside the safety window, as JSON) — not just the plain-text rendering. This lets the server rebuild an in-memory canonical CRDT for a room on startup without replaying the entire op history from the beginning. Task 13 may compact older in-memory tombstones after a later successful snapshot; it never deletes durable operation-log rows.
 - `snapshot_version` marks how far the snapshot covers. On room startup: load `snapshot`, then replay all `operations` where `sequence > snapshot_version`.
 - `slug` is randomly generated, not sequential or guessable — it is the entire access-control mechanism in v1 (anyone with the link can view/edit).
 
