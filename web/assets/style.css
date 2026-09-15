@@ -78,6 +78,14 @@ h1 {
   font-size: 0.9rem;
 }
 
+.status[data-state="connected"] {
+  color: #2f855a;
+}
+
+.status[data-state="error"] {
+  color: #c53030;
+}
+
 .editor-shell {
   display: grid;
   min-height: 100vh;
@@ -110,4 +118,9 @@ h1 {
   background: white;
   box-shadow: 0 1rem 3rem rgb(31 42 67 / 8%);
   font: 1.05rem/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.editor:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }

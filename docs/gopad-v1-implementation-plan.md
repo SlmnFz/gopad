@@ -250,24 +250,27 @@ git commit -m "feat(realtime): add sequenced collaborative rooms"
 **Interfaces:**
 - Produces: `RgaDocument.apply(op)`, `RgaDocument.text()`, `SocketClient.connect()`, DOM-to-operation translation
 
-- [ ] **Step 1: Implement the browser replica**
+- [x] **Step 1: Implement the browser replica**
 
 Use ES modules and the same comparator and tombstone semantics as the Go CRDT (Task 2), applied to a plain `textarea` (per `gopad-spec.md` §4 — simplest, avoids `contenteditable` cursor/selection quirks). Persist a random username prompt result in `localStorage`; accept the server-issued site ID on connect. Diff textarea input into insert/delete operations against the local visible-view mapping, apply locally first (optimistic), then send.
 
-- [ ] **Step 2: Implement reconnect and resync**
+- [x] **Step 2: Implement reconnect and resync**
 
 Reconnect with capped exponential backoff: 250ms, 500ms, 1s, 2s, 4s, 8s. On every `sync` message, replace local CRDT state wholesale with the authoritative snapshot rather than attempting to merge — matches the v1 resync decision (re-fetch snapshot, don't replay unacked local ops). Disable editing while disconnected so no keystrokes are silently lost.
 
-- [ ] **Step 3: Add a zero-build JavaScript test runner**
+- [x] **Step 3: Add a zero-build JavaScript test runner**
 
 Create `crdt.test.js` using `node:test` and `node:assert/strict`. Mirror the Go convergence cases from Task 2 and add visible-offset-to-`leftID` mapping tests specific to the browser diffing logic.
 
-- [ ] **Step 4: Verify browser logic**
+- [x] **Step 4: Verify browser logic**
 
 Run: `node --test web/assets/crdt.test.js && go test ./...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+The six zero-build browser CRDT tests, full Go suite, and `go vet ./...` pass
+locally.
+
+- [x] **Step 5: Commit**
 
 ```bash
 git add web
