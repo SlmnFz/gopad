@@ -1,4 +1,5 @@
 import { cloneCharID, sameCharID } from "./crdt.js";
+import { renderAvatar } from "./avatar.js";
 
 export function anchorForVisibleOffset(documentState, offset) {
   const visible = documentState.visibleCharacters();
@@ -101,6 +102,14 @@ export class PresenceState {
   cursorEntries() {
     return [...this.cursors.values()];
   }
+
+  userEntries() {
+    return [...this.users.values()].sort((left, right) => {
+      const leftName = left.username || "";
+      const rightName = right.username || "";
+      return leftName.localeCompare(rightName) || (left.siteID || "").localeCompare(right.siteID || "");
+    });
+  }
 }
 
 export function renderRemoteCursors(container, textarea, documentState, cursors) {
@@ -127,7 +136,10 @@ export function renderRemoteCursors(container, textarea, documentState, cursors)
 
     const label = document.createElement("span");
     label.className = "remote-cursor-label";
-    label.textContent = cursor.username || "Collaborator";
+    label.append(renderAvatar(cursor.username || "Collaborator", 14));
+    const username = document.createElement("span");
+    username.textContent = cursor.username || "Collaborator";
+    label.append(username);
     marker.append(label);
     container.append(marker);
   }

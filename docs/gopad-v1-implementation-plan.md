@@ -422,23 +422,25 @@ git commit -m "feat(cache): add TTL cache for slug-existence lookups"
 **Interfaces:**
 - Consumes: existing `RgaDocument`/`SocketClient` from Task 6, presence overlay and stable per-user color from Task 7
 - Produces: theme CSS custom properties, a per-user direction toggle, `detectDirection(text)` helper, `renderAvatar(username, size) -> SVGElement`
-- [ ] **Step 1: Build the terminal-noir theme**
+- [x] **Step 1: Build the terminal-noir theme**
 Restyle around CSS custom properties on `:root` — near-black background, phosphor-green primary text (`#33ff33`-ish, tuned for contrast against the Global Constraints' plain-text focus, not neon-glow-heavy), monospace stack (`ui-monospace, "SF Mono", "Cascadia Code", monospace`) for the editor and chrome alike. Subtle scanline/vignette treatment via a low-opacity repeating-linear-gradient overlay — cheap CSS, no canvas/JS, and disabled under `prefers-reduced-motion`/`prefers-contrast: more` for accessibility. Collaborator cursor colors (Task 7) must stay legible against the dark background — clamp assigned colors to a minimum lightness rather than using raw hash-derived hues. No frontend build system per Global Constraints — plain CSS custom properties, no preprocessor.
  
-- [ ] **Step 2: Add deterministic per-user SVG avatars**
+- [x] **Step 2: Add deterministic per-user SVG avatars**
 `avatar.js` exports `renderAvatar(username, size)`, pure and client-only — no server round trip, no new store table. Hash the username with a small FNV-1a implementation to get a 32-bit seed, feed it through a seeded PRNG (mulberry32 or similar, inlined — no new dependency), and derive a mirrored 5×5 geometric grid plus a background/foreground hue pair from the seed, matching the reference demo built earlier in this conversation. Reuse the same seed source as the stable per-user color from Task 7's presence system (derive both from the username hash) so a given collaborator's avatar and cursor color always agree. Render the avatar next to usernames in the collaborator list and next to remote cursor labels; keep it to the terminal theme's palette (clamp hue/lightness the same way cursor colors are clamped in Step 1) so avatars don't clash with the dark background.
  
-- [ ] **Step 3: Add Persian/RTL handling**
+- [x] **Step 3: Add Persian/RTL handling**
 Self-host a Vazirmatn (or similar open-license Persian-friendly) webfont subset covering Persian + Latin so no external font CDN is required (keeps the "serve static assets directly" constraint intact). Add a `detectDirection(text)` helper in `app.js` using the Unicode bidi character ranges to guess RTL vs LTR from the first strongly-directional character typed, and apply `dir="auto"` plus a manual override toggle in the editor chrome (some users will paste mixed content and want to pin direction rather than have it flip under them). Confirm the CRDT layer is untouched by this — direction and font are purely presentational; character IDs, `LeftID` ordering, and the textarea diffing from Task 6 operate on the logical character sequence regardless of visual RTL/LTR rendering, so no changes to `crdt.js` are needed here.
  
-- [ ] **Step 4: Add tests for direction logic and avatars**
+- [x] **Step 4: Add tests for direction logic and avatars**
 `app.test.js` (same zero-build `node:test` runner as Task 6): `detectDirection` returns `rtl` for Persian-first strings, `ltr` for Latin-first strings, and a stable default for direction-neutral input (digits/punctuation only). Assert the manual override, once set, is not overwritten by subsequent auto-detection on the same session. `avatar.test.js`: `renderAvatar` is deterministic (same username twice produces identical markup), different usernames produce different output with overwhelming probability (spot-check a sample list for collisions), and output stays a valid, small SVG (bounded node count, no external references).
  
-- [ ] **Step 5: Verify**
+- [x] **Step 5: Verify**
 Run: `node --test web/assets/*.test.js && go test ./internal/server -v`
 Expected: PASS; manually confirm in-browser that typing Persian text renders RTL with correct glyph shaping, that avatars are stable across reconnects, and that the theme respects `prefers-reduced-motion`.
- 
-- [ ] **Step 6: Commit**
+
+Verification: browser preview confirmed the connected editor, deterministic collaborator avatar, Persian RTL auto-detection, manual direction override, and AUTO reset. Local Node tests, `go test ./...`, and `go vet ./...` pass.
+
+- [x] **Step 6: Commit**
 ```bash
 git add web
 git commit -m "feat(ui): add terminal theme, avatars, and Persian RTL support"

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="auto">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -19,13 +19,23 @@
         </div>
       </header>
       <section class="editor-panel" aria-label="Collaborative document">
-        <div class="panel-bar" aria-hidden="true">
+        <div class="panel-bar">
           <span>DOCUMENT CHANNEL</span>
-          <span id="presence-status">0 COLLABORATORS</span>
-          <span>/// ENCRYPTION: NONE / V1</span>
+          <div class="presence-cluster" aria-live="polite">
+            <span id="presence-status">0 COLLABORATORS</span>
+            <div id="presence-list" class="presence-list" aria-label="Active collaborators"></div>
+          </div>
+          <label class="direction-control" for="direction-toggle">
+            DIR
+            <select id="direction-toggle" aria-label="Text direction">
+              <option value="auto">AUTO</option>
+              <option value="ltr">LTR</option>
+              <option value="rtl">RTL</option>
+            </select>
+          </label>
         </div>
         <div class="editor-stage">
-          <textarea id="editor" class="editor" aria-label="Document text" placeholder="Start writing…" disabled></textarea>
+          <textarea id="editor" class="editor" aria-label="Document text" dir="auto" placeholder="Start writing…" disabled></textarea>
           <div id="remote-cursors" class="remote-cursors" aria-hidden="true"></div>
         </div>
       </section>
