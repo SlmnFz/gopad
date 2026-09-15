@@ -3,6 +3,7 @@ import {
   anchorForVisibleOffset,
   PresenceState,
   renderRemoteCursors,
+  visibleOffsetForAnchor,
 } from "./presence.js";
 import { renderAvatar } from "./avatar.js";
 import { SocketClient } from "./ws.js";
@@ -48,6 +49,48 @@ export function createDirectionController(defaultDirection = "ltr") {
       }
       return direction;
     },
+  };
+}
+
+export function editorOffsetToVisibleOffset(text, editorOffset) {
+  const boundedOffset = Math.max(0, Math.min(Number(editorOffset) || 0, text.length));
+  let editorPosition = 0;
+  let visibleOffset = 0;
+  for (const character of Array.from(text)) {
+    if (editorPosition + character.length > boundedOffset) {
+      break;
+    }
+    editorPosition += character.length;
+    visibleOffset += 1;
+  }
+  return visibleOffset;
+}
+
+export function visibleOffsetToEditorOffset(text, visibleOffset) {
+  const boundedOffset = Math.max(0, Math.min(Number(visibleOffset) || 0, Array.from(text).length));
+  let editorOffset = 0;
+  let index = 0;
+  for (const character of Array.from(text)) {
+    if (index >= boundedOffset) {
+      break;
+    }
+    editorOffset += character.length;
+    index += 1;
+  }
+  return editorOffset;
+}
+
+export function selectionAnchors(documentState, text, start, end) {
+  return {
+    start: anchorForVisibleOffset(documentState, editorOffsetToVisibleOffset(text, start)),
+    end: anchorForVisibleOffset(documentState, editorOffsetToVisibleOffset(text, end)),
+  };
+}
+
+export function selectionOffsets(documentState, text, selection) {
+  return {
+    start: visibleOffsetToEditorOffset(text, visibleOffsetForAnchor(documentState, selection.start)),
+    end: visibleOffsetToEditorOffset(text, visibleOffsetForAnchor(documentState, selection.end)),
   };
 }
 
@@ -109,16 +152,20 @@ function applyDirection(text) {
   }
 }
 
-function renderText() {
-  const selectionStart = editor.selectionStart;
-  const selectionEnd = editor.selectionEnd;
+function captureSelection() {
+  if (document.activeElement !== editor) {
+    return null;
+  }
+  return selectionAnchors(documentState, renderedText, editor.selectionStart, editor.selectionEnd);
+}
+
+function renderText(selection = null) {
   const text = documentState.text();
   editor.value = text;
   renderedText = text;
   applyDirection(text);
-  if (document.activeElement === editor) {
-    const nextStart = Math.min(selectionStart, text.length);
-    const nextEnd = Math.min(selectionEnd, text.length);
+  if (selection && document.activeElement === editor) {
+    const { start: nextStart, end: nextEnd } = selectionOffsets(documentState, text, selection);
     editor.setSelectionRange(nextStart, nextEnd);
   }
   renderRemoteCursors(remoteCursors, editor, documentState, presenceState.cursorEntries());
@@ -182,9 +229,10 @@ function handleEnvelope(envelope) {
     return;
   }
   if (envelope.type === "op") {
+    const selection = captureSelection();
     try {
       documentState.apply(envelope.payload);
-      renderText();
+      renderText(selection);
     } catch (error) {
       setStatus(`Sync error: ${error.message}`, "error");
     }
