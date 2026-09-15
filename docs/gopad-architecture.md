@@ -51,7 +51,7 @@ case <-idleTimer.C:
     }
 ```
 
-Room eviction uses a grace period after the last client disconnects (not immediate teardown), so a quick reconnect doesn't force a full reload-from-DB. Exact grace-period duration is an open tuning question — start with something like 30-60s and adjust based on observed reconnect behavior.
+Room eviction uses a 45-second grace period after the last client disconnects (configurable with `GOPAD_ROOM_IDLE_TIMEOUT`, including a duration such as `90s`), so a quick reconnect doesn't force a full reload from the database.
 
 ## 4. Persistence write path
 
@@ -66,7 +66,7 @@ op arrives → apply to in-memory CRDT → broadcast immediately (latency-critic
            → append to an in-memory write buffer for that room
 ```
 
-A separate ticker per room (e.g. every 200-500ms, or every N ops, whichever comes first) flushes the buffer as one batched `INSERT` transaction. Broadcast latency is now fully decoupled from DB write latency. Durability window: worst case, the last ~200-500ms of unflushed ops are lost on a crash — an explicit, acceptable v1 tradeoff.
+A bounded writer queue flushes at 100 operations or 250ms, whichever comes first. Broadcast latency is fully decoupled from DB write latency. Durability window: worst case, the last 250ms of unflushed ops are lost on a crash — an explicit, acceptable v1 tradeoff.
 
 ### 4.2 Known ceiling, stated upgrade path
 
@@ -176,7 +176,7 @@ type Room struct {
 
 // inside the event loop, after applying an op:
 r.opsSinceSnapshot++
-if r.opsSinceSnapshot >= snapshotOpThreshold {
+if r.opsSinceSnapshot >= 1000 {
     select {
     case r.snapshotTrigger <- struct{}{}:
     default: // snapshot already pending/in-flight — don't queue more
@@ -187,7 +187,7 @@ if r.opsSinceSnapshot >= snapshotOpThreshold {
 
 ```go
 func (r *Room) snapshotWorker(ctx context.Context) {
-    ticker := time.NewTicker(maxSnapshotInterval) // time-based fallback trigger
+    ticker := time.NewTicker(30 * time.Second) // time-based fallback trigger
     for {
         select {
         case <-r.snapshotTrigger:
@@ -255,6 +255,8 @@ This split is easy to miss and directly determines whether "concurrent editors a
 
 ## 10. Open tuning questions
 
-- Exact room idle-eviction grace period (proposed starting point: 30-60s).
-- Write-buffer flush interval / batch size threshold (proposed starting point: 200-500ms or N ops, whichever first).
-- Snapshot trigger policy — still open from `gopad-schema.md` (every N ops? every X seconds? on last-client-disconnect?). Related to, but distinct from, the write-buffer flush — snapshotting rewrites `documents.snapshot`, flushing writes to `operations`.
+These v1 tuning values are fixed and configurable only where noted:
+
+- Room idle-eviction grace period: 45 seconds, via `GOPAD_ROOM_IDLE_TIMEOUT`.
+- Operation write flush: 100 operations or 250ms, via `GOPAD_OP_BATCH_SIZE` and `GOPAD_OP_FLUSH_INTERVAL`.
+- Snapshot trigger: 1,000 operations or 30 seconds. Snapshot signals are coalesced in a buffered size-one queue; snapshots rewrite `documents.snapshot` while operation batches append to `operations`.

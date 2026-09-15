@@ -22,21 +22,23 @@ const (
 )
 
 type roomCommand struct {
-	kind      roomCommandKind
-	client    *Client
-	operation crdt.Operation
-	cursor    CursorPayload
+	kind         roomCommandKind
+	client       *Client
+	operation    crdt.Operation
+	clientSentAt int64
+	cursor       CursorPayload
 }
 
 // Room serializes all canonical CRDT mutation through one owner goroutine.
 type Room struct {
-	hub         *Hub
-	slug        string
-	documentID  int64
-	document    *crdt.Document
-	sequence    int64
-	operations  []store.OperationRecord
-	persistTail <-chan struct{}
+	hub              *Hub
+	slug             string
+	documentID       int64
+	document         *crdt.Document
+	sequence         int64
+	operations       []store.OperationRecord
+	persistTail      <-chan struct{}
+	opsSinceSnapshot int
 
 	commands chan roomCommand
 	done     chan struct{}
@@ -123,6 +125,13 @@ func (r *Room) run(ctx context.Context) {
 		idleC = idleTimer.C
 	}
 	startIdleTimer()
+	var snapshotTicker *time.Ticker
+	var snapshotC <-chan time.Time
+	if r.hub.writer != nil {
+		snapshotTicker = time.NewTicker(r.hub.config.SnapshotInterval)
+		snapshotC = snapshotTicker.C
+		defer snapshotTicker.Stop()
+	}
 
 	for {
 		select {
@@ -137,23 +146,28 @@ func (r *Room) run(ctx context.Context) {
 					startIdleTimer()
 				}
 			case commandOperation:
-				r.applyOperation(ctx, command.client, command.operation)
+				r.applyOperation(ctx, command.client, command.operation, command.clientSentAt)
 			case commandCursor:
 				r.applyCursor(command.client)
 			case commandShutdown:
+				r.requestSnapshot()
 				r.closeClients()
 				return
 			}
 		case <-idleC:
 			if len(r.clients) == 0 {
+				r.requestSnapshot()
 				r.hub.removeRoom(r)
 				return
 			}
 			idleC = nil
 			idleTimer = nil
 		case <-ctx.Done():
+			r.requestSnapshot()
 			r.closeClients()
 			return
+		case <-snapshotC:
+			r.requestSnapshot()
 		}
 	}
 }
@@ -179,6 +193,7 @@ func (r *Room) register(client *Client) {
 		client.close()
 		return
 	}
+	r.hub.metrics.IncActiveConnections()
 	r.broadcastPresence("join", client, client)
 }
 
@@ -188,6 +203,7 @@ func (r *Room) unregister(client *Client) {
 	}
 	if _, ok := r.clients[client]; ok {
 		delete(r.clients, client)
+		r.hub.metrics.DecActiveConnections()
 		r.clearCursor(client)
 		client.close()
 		r.broadcastPresence("leave", client, nil)
@@ -215,6 +231,7 @@ func (r *Room) broadcastPresence(event string, client *Client, exclude *Client) 
 }
 
 func (r *Room) broadcast(data []byte, exclude *Client) {
+	start := time.Now()
 	for client := range r.clients {
 		if client == exclude {
 			continue
@@ -222,15 +239,20 @@ func (r *Room) broadcast(data []byte, exclude *Client) {
 		job := fanoutJob{
 			client: client,
 			data:   data,
-			onDrop: func() { r.Unregister(client) },
+			onDrop: func() {
+				r.hub.metrics.IncDroppedClients()
+				r.Unregister(client)
+			},
 		}
 		if !r.hub.fanout.submit(job) {
+			r.hub.metrics.IncDroppedClients()
 			r.unregister(client)
 		}
 	}
+	r.hub.metrics.ObserveBroadcastLatency(time.Since(start))
 }
 
-func (r *Room) applyOperation(ctx context.Context, sender *Client, operation crdt.Operation) {
+func (r *Room) applyOperation(ctx context.Context, sender *Client, operation crdt.Operation, clientSentAt int64) {
 	if err := r.document.Apply(operation); err != nil {
 		data, marshalErr := marshalEnvelope(MessageError, ErrorPayload{Message: err.Error()})
 		if marshalErr == nil && sender != nil {
@@ -240,19 +262,31 @@ func (r *Room) applyOperation(ctx context.Context, sender *Client, operation crd
 	}
 
 	r.sequence++
-	payload := OperationPayload{Operation: operation, Sequence: r.sequence}
+	r.opsSinceSnapshot++
+	r.hub.metrics.IncOperations()
+	payload := OperationPayload{Operation: operation, Sequence: r.sequence, ClientSentAt: clientSentAt}
 	data, err := marshalEnvelope(MessageOp, payload)
 	if err != nil {
 		return
 	}
 	r.broadcast(data, sender)
 	r.queuePersistence(sender, operation)
+	if r.opsSinceSnapshot >= r.hub.config.SnapshotOpThreshold {
+		r.requestSnapshot()
+	}
 }
 
-// queuePersistence chains asynchronous writes in room sequence order without
-// making the room owner wait for the store. Task 8 replaces this bridge with
-// the shared batching writer.
 func (r *Room) queuePersistence(client *Client, operation crdt.Operation) {
+	if r.hub.writer != nil {
+		userID := int64(1)
+		if client != nil && client.userID > 0 {
+			userID = client.userID
+		}
+		_ = r.hub.writer.EnqueueOps(r.documentID, userID, []crdt.Operation{operation})
+		return
+	}
+	// Compatible in-memory test stores do not provide a writer. Keep their
+	// persistence path asynchronous without affecting the production path.
 	waitFor := r.persistTail
 	next := make(chan struct{})
 	r.persistTail = next
@@ -269,8 +303,18 @@ func (r *Room) queuePersistence(client *Client, operation crdt.Operation) {
 	}()
 }
 
+func (r *Room) requestSnapshot() {
+	if r.hub.writer == nil || r.opsSinceSnapshot == 0 {
+		return
+	}
+	if r.hub.writer.EnqueueSnapshot(r.documentID, r.document.Snapshot(), r.sequence) {
+		r.opsSinceSnapshot = 0
+	}
+}
+
 func (r *Room) closeClients() {
 	for client := range r.clients {
+		r.hub.metrics.DecActiveConnections()
 		r.clearCursor(client)
 		client.close()
 	}
@@ -326,6 +370,12 @@ func (r *Room) Unregister(client *Client) {
 // SubmitOperation applies a client operation on the room owner goroutine.
 func (r *Room) SubmitOperation(client *Client, operation crdt.Operation) {
 	r.submit(roomCommand{kind: commandOperation, client: client, operation: operation})
+}
+
+// SubmitOperationWithTimestamp is used by load clients to measure end-to-end
+// delivery without changing the CRDT operation itself.
+func (r *Room) SubmitOperationWithTimestamp(client *Client, operation crdt.Operation, clientSentAt int64) {
+	r.submit(roomCommand{kind: commandOperation, client: client, operation: operation, clientSentAt: clientSentAt})
 }
 
 // SubmitCursor coalesces pending updates per client and never blocks the

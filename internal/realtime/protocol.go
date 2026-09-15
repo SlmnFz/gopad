@@ -24,7 +24,8 @@ type Envelope struct {
 // OperationPayload carries a CRDT operation and its server-assigned sequence.
 type OperationPayload struct {
 	crdt.Operation
-	Sequence int64 `json:"sequence,omitempty"`
+	Sequence     int64 `json:"sequence,omitempty"`
+	ClientSentAt int64 `json:"clientSentAt,omitempty"`
 }
 
 // SyncPayload is sent once to a client when it joins a room.

@@ -332,15 +332,15 @@ git commit -m "feat(presence): show collaborators and remote cursors"
 **Interfaces:**
 - Produces: `Writer.EnqueueOps`, `Writer.EnqueueSnapshot`, `Writer.Flush`, `/metrics`, private `/debug/pprof/`, graceful shutdown
 
-- [ ] **Step 1: Implement background persistence**
+- [x] **Step 1: Implement background persistence**
 
 One dedicated writer goroutine fed by a bounded job channel (per `gopad-architecture.md` §9.3 — do not let multiple goroutines call the write handle directly). Op-batch flush triggers at 100 operations or 250ms, whichever first. Snapshot triggers at 1,000 operations or 30 seconds, whichever first, coalescing multiple pending signals into one in-flight snapshot (buffered-size-1 trigger channel, per §9.2). The snapshot path requests a deep copy of CRDT state from the room's owner goroutine (cheap struct copy) and does the expensive JSON marshal + DB write off that copy, outside the room event loop. Both thresholds resolve the two tuning questions left open in `gopad-architecture.md` §10 — update that doc's open-questions section to reflect these are now fixed, not still open.
 
-- [ ] **Step 2: Wire room eviction and shutdown to the writer**
+- [x] **Step 2: Wire room eviction and shutdown to the writer**
 
 Confirm the room idle-eviction default from Task 5 (`GOPAD_ROOM_IDLE_TIMEOUT`, 45s) is documented alongside the new batching env vars. On graceful shutdown: stop accepting new connections, request a final flush from every active room's writer queue, close existing WebSocket connections with a proper close frame, then exit — do not exit while flushes are still in flight.
 
-- [ ] **Step 3: Add batching and shutdown tests**
+- [x] **Step 3: Add batching and shutdown tests**
 
 With a fake executor and fake clock: assert flush fires at 100 ops or 250ms; snapshot fires at 1,000 ops or 30s; multiple rapid snapshot triggers coalesce into one in-flight write; a full/backed-up queue surfaces as a metric rather than blocking the room loop; shutdown waits for the final flush to complete before returning.
 
@@ -349,11 +349,13 @@ With a fake executor and fake clock: assert flush fires at 100 ops or 250ms; sna
 Run: `go test -race ./internal/store ./internal/realtime ./internal/server -v`
 Expected: PASS.
 
-- [ ] **Step 5: Add metrics and profiling**
+Focused non-race tests pass locally; the Windows environment has no GCC for `-race`, so the race-enabled verification remains a GitHub Actions gate.
+
+- [x] **Step 5: Add metrics and profiling**
 
 Record active connections/rooms (gauges), operations processed (counter), broadcast/fan-out latency (histogram), write-batch size/latency (histogram), write-queue depth (gauge), and dropped/slow-client count (counter) with Prometheus collectors. Mount `/metrics` on the main listener. Mount `/debug/pprof/*` only when `GOPAD_ENABLE_PPROF=1`, and bind it to an internal-only listener, never the public one — per `AGENTS.md` security guidance.
 
-- [ ] **Step 6: Add the load scenario and operating guide**
+- [x] **Step 6: Add the load scenario and operating guide**
 
 `loadtest/websocket.js` (k6): create documents, connect a configurable number of virtual users, emit timestamped edits at human-like intervals, and check round-trip receipt latency against a threshold. Document `GOPAD_DB_PATH`, `GOPAD_ADDR`, `GOPAD_ROOM_IDLE_TIMEOUT`, `GOPAD_ENABLE_PPROF`, load-test thresholds, development commands, and the username-only trust model (per `gopad-schema.md` §1 — usernames are claims, not authenticated identities) in `README.md`.
 
@@ -362,10 +364,12 @@ Record active connections/rooms (gauges), operations processed (counter), broadc
 Run: `gofmt -w cmd internal && go test -race ./... && go vet ./... && node --test web/assets/*.test.js`
 Expected: every command passes with no race reports.
 
+Local Go, vet, and browser checks pass; the local `go test -race ./...` invocation is blocked by the missing Windows GCC toolchain and is left for CI.
+
 Run locally: `go run ./cmd/gopad`, then `k6 run loadtest/websocket.js`.
 Expected: health and metrics endpoints respond, collaborative edits converge, and the configured latency thresholds pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add cmd internal loadtest README.md
@@ -438,3 +442,39 @@ git add web
 git commit -m "feat(ui): add terminal theme, avatars, and Persian RTL support"
 ```
  
+### Task 11: CRDT convergence fuzzing, simulated network faults, and scale benchmarks
+ 
+**Files:**
+- Create: `internal/crdt/harness_test.go`
+- Create: `internal/crdt/property_test.go`
+- Create: `internal/crdt/fuzz_test.go`
+- Create: `internal/crdt/bench_test.go`
+- Create: `internal/crdt/testdata/fuzz/` (seed corpus, populated by Step 4)
+- Modify: `internal/crdt/document.go` (only if a small exported hook is needed for deep-copy/inspection in tests — prefer test-only helpers first)
+**Interfaces:**
+- Consumes: `Document`, `Operation`, `CharID` from Task 2 — no production behavior change, this task is test/bench-only unless Step 1 finds a real gap
+- Produces: `simNetwork` (in-package test helper: N replicas, injectable delivery order/drop/duplicate/partition), a random-but-valid `Operation` generator, `go test -fuzz=FuzzTwoReplicaConverge`, `go test -bench=.` suite
+- [ ] **Step 1: Build a multi-replica simulation harness**
+`harness_test.go` defines `simNetwork`, owning N in-memory `*Document` replicas plus a queue of pending `(fromReplica, op)` deliveries. Support: arbitrary reordering of the pending queue, dropping a message (with optional later redelivery to simulate retry), duplicating a message (must be a no-op given CRDT idempotence — Task 2 already covers single-duplicate; this harness now covers duplicates arriving interleaved with unrelated ops), and partitioning a subset of replicas (their ops queue locally and are withheld from the rest) followed by healing (queued ops flush across the partition boundary in random order). Every harness run takes an explicit `*rand.Rand` seeded from a single `int64`, and on any assertion failure the test must print that seed plus the full delivered-op sequence in replay order — the whole point of this harness is that a failure is reproducible by rerunning with the printed seed, not just "it failed once."
+ 
+- [ ] **Step 2: Add a random-but-valid operation generator**
+Generate `Insert`/`Delete` sequences that are individually well-formed against Task 2's rules (a `Delete` always targets a `CharID` some replica has actually seen inserted; an `Insert`'s `LeftID` is either the zero value or a previously-generated ID) but whose *arrival order across replicas* is deliberately adversarial — that's what exercises convergence, not malformed input (malformed input belongs to Task 2's typed-error tests, already covered). Bias the generator toward concurrent siblings (multiple replicas inserting after the same `LeftID` in the same round) and toward delete/insert races (one replica deletes a character while another concurrently inserts after it), since those are RGA's actual hard cases.
+ 
+- [ ] **Step 3: Add the property-based convergence test**
+`property_test.go`: `TestProperty_NReplicasConverge` runs many iterations (start at 500, tunable via `-short`/env var so CI can trim it) varying replica count (2–5), op count per run (10–200), and fault mix (plain reorder / drop+redeliver / duplicate / partition+heal), using the Step 1 harness and Step 2 generator. After every op has been delivered to every replica (including any withheld-then-healed ones), assert all replicas' `Text()` are identical. This is the test that actually earns the "I stress-tested my CRDT" claim — the existing Task 2 tests are worked examples, this is the search.
+ 
+- [ ] **Step 4: Add native Go fuzzing on top of the same invariant**
+`fuzz_test.go`: `FuzzTwoReplicaConverge(f *testing.F)` decodes fuzzer-provided bytes into a bounded op sequence (reuse Step 2's construction logic, just driven by fuzz bytes instead of `math/rand`) and asserts two-replica convergence under both original and reversed delivery order. Seed the corpus (`testdata/fuzz/`) with a handful of hand-picked regression cases: empty doc, single insert, delete-then-insert-at-same-spot, and any case Step 3 finds and you choose to pin permanently. `go test -fuzz` runs are opt-in/time-boxed locally and in a separate CI job, not part of the default `go test ./...` gate, since unbounded fuzzing time doesn't belong in every PR run.
+ 
+- [ ] **Step 5: Add scale benchmarks that surface the tombstone-growth cost**
+`bench_test.go`: `BenchmarkApply` and `BenchmarkText` at 1k/10k/100k/1M total ops, each run at a few delete ratios (0%, 30%, 70%) since deletes-as-tombstones (Global Constraints — tombstones are never removed) is the known RGA cost center; the point is to make the curve visible, not to hit a target number. Run with `-benchmem` to also track allocations per op. Record the current numbers in a short `internal/crdt/BENCHMARKS.md` so future changes have something to diff against.
+ 
+- [ ] **Step 6: Verify**
+Run: `go test -race ./internal/crdt -run Property -v` (property suite), `go test -race ./internal/crdt -v` (existing Task 2 suite still green), `go test ./internal/crdt -fuzz=FuzzTwoReplicaConverge -fuzztime=60s` (local fuzz smoke run — not part of the standard gate), `go test ./internal/crdt -bench=. -benchmem -run=^$`.
+Expected: property and regular suites PASS under `-race`; the 60s fuzz run finds no crashes; benchmarks complete and show the expected superlinear cost as tombstone count grows (confirms the harness is measuring something real, not a no-op).
+ 
+- [ ] **Step 7: Commit**
+```bash
+git add internal/crdt
+git commit -m "test(crdt): add property-based convergence fuzzing and scale benchmarks"
+```

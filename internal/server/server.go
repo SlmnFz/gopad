@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/local/gopad/internal/metrics"
 	"github.com/local/gopad/internal/store"
 )
 
@@ -24,7 +25,12 @@ func New(dependencies ...any) http.Handler {
 
 	var service DocumentService
 	var websocketHandler http.Handler
+	var metricsHandler http.Handler
 	for _, dependency := range dependencies {
+		if candidate, ok := dependency.(*metrics.Metrics); ok {
+			metricsHandler = candidate
+			continue
+		}
 		if candidate, ok := dependency.(DocumentService); ok {
 			service = candidate
 		}
@@ -35,6 +41,9 @@ func New(dependencies ...any) http.Handler {
 	registerDocumentRoutes(mux, service)
 	if websocketHandler != nil {
 		mux.Handle("GET /ws/{slug}", websocketHandler)
+	}
+	if metricsHandler != nil {
+		mux.Handle("GET /metrics", metricsHandler)
 	}
 	return mux
 }

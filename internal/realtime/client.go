@@ -205,7 +205,7 @@ func (c *Client) readLoop(ctx context.Context, room *Room) {
 				c.sendError("invalid operation")
 				continue
 			}
-			room.SubmitOperation(c, payload.Operation)
+			room.SubmitOperationWithTimestamp(c, payload.Operation, payload.ClientSentAt)
 		case MessageCursor:
 			var payload CursorPayload
 			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {

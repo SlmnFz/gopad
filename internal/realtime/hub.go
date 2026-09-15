@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/local/gopad/internal/crdt"
+	gopadmetrics "github.com/local/gopad/internal/metrics"
 	"github.com/local/gopad/internal/store"
 )
 
@@ -35,32 +36,57 @@ type AttributedOperationStore interface {
 	AppendOperationsForUser(context.Context, int64, int64, []crdt.Operation) error
 }
 
+// PersistenceWriter is the non-blocking write-behind surface used by rooms.
+type PersistenceWriter interface {
+	EnqueueOps(documentID, userID int64, operations []crdt.Operation) bool
+	EnqueueSnapshot(documentID int64, chars []crdt.Char, version int64) bool
+	Flush(context.Context) error
+	Close(context.Context) error
+}
+
 // HubConfig controls room lifecycle and bounded realtime queues.
 type HubConfig struct {
-	IdleTimeout     time.Duration
-	ClientQueueSize int
-	FanoutQueueSize int
-	FanoutWorkers   int
+	IdleTimeout         time.Duration
+	ClientQueueSize     int
+	FanoutQueueSize     int
+	FanoutWorkers       int
+	SnapshotOpThreshold int
+	SnapshotInterval    time.Duration
+	Writer              PersistenceWriter
+	Metrics             *gopadmetrics.Metrics
 }
 
 // Hub owns the active room registry and shared fan-out workers.
 type Hub struct {
-	store  Store
-	rooms  sync.Map
-	config HubConfig
-	fanout *fanoutPool
-	ctx    context.Context
+	store   Store
+	rooms   sync.Map
+	config  HubConfig
+	fanout  *fanoutPool
+	ctx     context.Context
+	writer  PersistenceWriter
+	metrics *gopadmetrics.Metrics
 
 	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewHub creates a hub with production defaults. The store must be non-nil.
 func NewHub(database Store) *Hub {
+	metrics := gopadmetrics.New()
+	snapshotOpThreshold, snapshotInterval := store.SnapshotConfigFromEnv()
+	var writer PersistenceWriter
+	if sqliteStore, ok := database.(*store.Store); ok {
+		writer = store.NewWriterWithConfig(sqliteStore, store.WriterConfigFromEnv(metrics))
+	}
 	return NewHubWithConfig(database, HubConfig{
-		IdleTimeout:     roomIdleTimeoutFromEnv(),
-		ClientQueueSize: defaultClientQueueSize,
-		FanoutQueueSize: defaultFanoutQueueSize,
-		FanoutWorkers:   defaultFanoutWorkers,
+		IdleTimeout:         roomIdleTimeoutFromEnv(),
+		ClientQueueSize:     defaultClientQueueSize,
+		FanoutQueueSize:     defaultFanoutQueueSize,
+		FanoutWorkers:       defaultFanoutWorkers,
+		SnapshotOpThreshold: snapshotOpThreshold,
+		SnapshotInterval:    snapshotInterval,
+		Writer:              writer,
+		Metrics:             metrics,
 	})
 }
 
@@ -78,11 +104,22 @@ func NewHubWithConfig(database Store, config HubConfig) *Hub {
 	if config.FanoutWorkers <= 0 {
 		config.FanoutWorkers = defaultFanoutWorkers
 	}
+	if config.SnapshotOpThreshold <= 0 {
+		config.SnapshotOpThreshold = store.DefaultSnapshotOpThreshold
+	}
+	if config.SnapshotInterval <= 0 {
+		config.SnapshotInterval = store.DefaultSnapshotInterval
+	}
+	if config.Metrics == nil {
+		config.Metrics = gopadmetrics.New()
+	}
 	return &Hub{
-		store:  database,
-		config: config,
-		fanout: newFanoutPool(config.FanoutWorkers, config.FanoutQueueSize),
-		ctx:    context.Background(),
+		store:   database,
+		config:  config,
+		fanout:  newFanoutPool(config.FanoutWorkers, config.FanoutQueueSize),
+		ctx:     context.Background(),
+		writer:  config.Writer,
+		metrics: config.Metrics,
 	}
 }
 
@@ -108,6 +145,7 @@ func (h *Hub) GetOrCreateRoom(ctx context.Context, slug string) (*Room, error) {
 	if loadedByOther {
 		return actual.(*Room), nil
 	}
+	h.metrics.AddActiveRooms(1)
 	go room.run(h.ctx)
 	return room, nil
 }
@@ -137,11 +175,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	client.serve(r.Context(), room)
 }
 
-// Close stops accepting room work, closes active clients, and stops fan-out
-// workers. It is safe to call more than once.
+// Close stops accepting room work, flushes accepted persistence, closes active
+// clients, and stops fan-out workers. It is safe to call more than once.
 func (h *Hub) Close() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = h.CloseContext(ctx)
+}
+
+// CloseContext performs the graceful shutdown sequence with a caller-owned
+// timeout. The writer is closed only after every room has requested its final
+// snapshot and all room goroutines have stopped.
+func (h *Hub) CloseContext(ctx context.Context) error {
 	if h == nil {
-		return
+		return nil
 	}
 	h.closeOnce.Do(func() {
 		rooms := make([]*Room, 0)
@@ -155,12 +202,26 @@ func (h *Hub) Close() {
 		for _, room := range rooms {
 			<-room.Done()
 		}
+		if h.writer != nil {
+			h.closeErr = h.writer.Close(ctx)
+		}
 		h.fanout.close()
 	})
+	return h.closeErr
 }
 
 func (h *Hub) removeRoom(room *Room) {
-	h.rooms.CompareAndDelete(room.slug, room)
+	if h.rooms.CompareAndDelete(room.slug, room) {
+		h.metrics.AddActiveRooms(-1)
+	}
+}
+
+// Metrics returns the registry shared by realtime and HTTP instrumentation.
+func (h *Hub) Metrics() *gopadmetrics.Metrics {
+	if h == nil {
+		return nil
+	}
+	return h.metrics
 }
 
 func roomIdleTimeoutFromEnv() time.Duration {

@@ -60,6 +60,26 @@ Invoke-WebRequest -UseBasicParsing http://localhost:8080/healthz
 
 The implementation is delivered in small, verifiable milestones. The plan documents the complete v1 target and the current status of each task.
 
+## Configuration
+
+The server uses these environment variables (all are optional):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GOPAD_DB_PATH` | `gopad.db` | SQLite database path |
+| `GOPAD_ADDR` | `:8080` | Public HTTP and WebSocket listener |
+| `GOPAD_ROOM_IDLE_TIMEOUT` | `45s` | Grace period before an idle room is evicted |
+| `GOPAD_WRITE_QUEUE_SIZE` | `1024` | Maximum queued persistence jobs |
+| `GOPAD_OP_BATCH_SIZE` | `100` | Operations that trigger a write flush |
+| `GOPAD_OP_FLUSH_INTERVAL` | `250ms` | Maximum operation write delay |
+| `GOPAD_SNAPSHOT_OP_THRESHOLD` | `1000` | Operations that trigger a snapshot copy |
+| `GOPAD_SNAPSHOT_INTERVAL` | `30s` | Maximum snapshot interval for dirty rooms |
+| `GOPAD_ENABLE_PPROF` | unset | Enables pprof on loopback-only `127.0.0.1:6060` |
+
+`GET /metrics` exposes Prometheus-compatible metrics for rooms, connections,
+operations, fan-out latency, write batches, queue depth, and dropped clients.
+The pprof listener is never mounted on the public listener.
+
 ## Development
 
 Run the full local quality checks:
@@ -74,6 +94,19 @@ go vet ./...
 Keep Go commands under `cmd/gopad`, server packages under `internal/`, browser files under `web/`, migrations under `internal/store/migrations/`, and load tests under `loadtest/`.
 
 Every push to `main` and every pull request runs the same formatting, race-enabled test, and vet checks in GitHub Actions on Ubuntu with `CGO_ENABLED=1`.
+
+### Load testing
+
+Install [k6](https://grafana.com/docs/k6/latest/), start Gopad, and run the
+shared-document WebSocket scenario:
+
+```powershell
+k6 run loadtest/websocket.js
+```
+
+Override the target and load with `GOPAD_BASE_URL`, `GOPAD_VUS`, and
+`GOPAD_DURATION`. The scenario checks that at least 95% of echoed edits are
+received within the configured 500ms round-trip threshold.
 
 ## v1 trust model
 

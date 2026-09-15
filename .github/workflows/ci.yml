@@ -38,3 +38,11 @@ jobs:
 
       - name: Run vet
         run: go vet ./...
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run browser tests
+        run: node --test web/assets/*.test.js

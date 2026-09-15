@@ -263,29 +263,34 @@ func (s *Store) CreateDocument(ctx context.Context) (Document, error) {
 }
 
 // AppendOperations stores a batch and assigns monotonically increasing
-// per-document server sequence numbers. Task 7 will add authenticated user
-// attribution; until then operations use the seeded system user.
+// per-document server sequence numbers using the seeded system user.
 func (s *Store) AppendOperations(ctx context.Context, documentID int64, operations []crdt.Operation) error {
-	return s.appendOperations(ctx, documentID, systemUserID, operations)
+	writes := make([]OperationWrite, 0, len(operations))
+	for _, operation := range operations {
+		writes = append(writes, OperationWrite{UserID: systemUserID, Operation: operation})
+	}
+	return s.AppendOperationBatch(ctx, documentID, writes)
 }
 
 // AppendOperationsForUser stores operations with the connected user's
 // attribution while preserving the CRDT site ID from each operation.
 func (s *Store) AppendOperationsForUser(ctx context.Context, documentID, userID int64, operations []crdt.Operation) error {
-	return s.appendOperations(ctx, documentID, userID, operations)
+	writes := make([]OperationWrite, 0, len(operations))
+	for _, operation := range operations {
+		writes = append(writes, OperationWrite{UserID: userID, Operation: operation})
+	}
+	return s.AppendOperationBatch(ctx, documentID, writes)
 }
 
-func (s *Store) appendOperations(ctx context.Context, documentID, userID int64, operations []crdt.Operation) error {
-	if len(operations) == 0 {
+// AppendOperationBatch stores an ordered batch while preserving per-operation
+// user attribution in one transaction.
+func (s *Store) AppendOperationBatch(ctx context.Context, documentID int64, writes []OperationWrite) error {
+	if len(writes) == 0 {
 		return nil
 	}
 	if s == nil || s.writeDB == nil {
 		return errors.New("store is not open")
 	}
-	if userID <= 0 {
-		userID = systemUserID
-	}
-
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin operation transaction: %w", err)
@@ -301,7 +306,12 @@ func (s *Store) appendOperations(ctx context.Context, documentID, userID int64, 
 		return fmt.Errorf("read operation sequence: %w", err)
 	}
 
-	for _, operation := range operations {
+	for _, write := range writes {
+		operation := write.Operation
+		userID := write.UserID
+		if userID <= 0 {
+			userID = systemUserID
+		}
 		if operation.Type != crdt.Insert && operation.Type != crdt.Delete {
 			return fmt.Errorf("unsupported operation type %q", operation.Type)
 		}
@@ -313,7 +323,7 @@ func (s *Store) appendOperations(ctx context.Context, documentID, userID int64, 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO operations (document_id, sequence, user_id, site_id, op_type, payload)
 			VALUES (?, ?, ?, ?, ?, ?)
-		`, documentID, sequence, systemUserID, operation.ID.SiteID, operation.Type, payload); err != nil {
+		`, documentID, sequence, userID, operation.ID.SiteID, operation.Type, payload); err != nil {
 			return fmt.Errorf("insert operation %d: %w", sequence, err)
 		}
 	}
