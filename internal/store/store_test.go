@@ -136,6 +136,63 @@ func TestStore_LoadMissingDocument(t *testing.T) {
 	}
 }
 
+func TestStore_HistoryReadsDurableLogAroundSnapshot(t *testing.T) {
+	store := openTestStore(t)
+	document, err := store.CreateDocument(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := crdt.CharID{SiteID: "history-store", Counter: 1}
+	b := crdt.CharID{SiteID: "history-store", Counter: 2}
+	first := crdt.Operation{Type: crdt.Insert, ID: a, Value: 'A'}
+	second := crdt.Operation{Type: crdt.Insert, ID: b, Value: 'B', LeftID: &a}
+	if err := store.AppendOperations(context.Background(), document.ID, []crdt.Operation{first}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := crdt.New()
+	if err := snapshot.Apply(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSnapshot(context.Background(), document.ID, snapshot.Snapshot(), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendOperations(context.Background(), document.ID, []crdt.Operation{second}); err != nil {
+		t.Fatal(err)
+	}
+
+	chars, snapshotSeq, err := store.SnapshotBeforeSeq(document.Slug, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshotSeq != 0 || len(chars) != 0 {
+		t.Fatalf("pre-snapshot result = seq %d chars %#v", snapshotSeq, chars)
+	}
+	chars, snapshotSeq, err = store.SnapshotBeforeSeq(document.Slug, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshotSeq != 1 || len(chars) != 1 || chars[0].Value != 'A' {
+		t.Fatalf("snapshot result = seq %d chars %#v", snapshotSeq, chars)
+	}
+	operations, err := store.OperationsInRange(document.Slug, snapshotSeq, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 1 || operations[0].ID != b || operations[0].Value != 'B' {
+		t.Fatalf("history operations = %#v", operations)
+	}
+	bounds, err := store.HistoryBounds(document.Slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounds.MinSeq != 0 || bounds.MaxSeq != 2 || bounds.CurrentSeq != 2 || bounds.CreatedAt.IsZero() {
+		t.Fatalf("history bounds = %#v", bounds)
+	}
+	if timestamp, err := store.OperationTimestamp(document.Slug, 1); err != nil || timestamp.IsZero() {
+		t.Fatalf("operation timestamp = %v, error = %v", timestamp, err)
+	}
+}
+
 func TestStore_FindOrCreateUserKeepsUsernameAndColorStable(t *testing.T) {
 	store := openTestStore(t)
 

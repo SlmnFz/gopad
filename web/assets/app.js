@@ -7,6 +7,8 @@ import {
 } from "./presence.js";
 import { renderAvatar } from "./avatar.js";
 import { SocketClient } from "./ws.js";
+import { decryptReveal } from "./decrypt.js";
+import { renderScrubber } from "./history.js";
 
 const rtlStrongCharacter = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff]/u;
 const ltrStrongCharacter = /[A-Za-z\u00c0-\u02af\u0370-\u058f\u0900-\u1fff\u2c00-\u2dff\ua720-\ua7ff]/u;
@@ -101,6 +103,8 @@ const presenceStatus = document.querySelector("#presence-status");
 const presenceList = document.querySelector("#presence-list");
 const directionToggle = document.querySelector("#direction-toggle");
 const remoteCursors = document.querySelector("#remote-cursors");
+const historyOpen = document.querySelector("#history-open");
+const historyContainer = document.querySelector("#history-scrubber");
 const slugMatch = window.location.pathname.match(/^\/d\/([0-9A-Za-z]{12})\/?$/);
 const slug = slugMatch ? slugMatch[1] : "";
 const documentState = new RgaDocument();
@@ -114,6 +118,24 @@ let ready = false;
 let renderedText = "";
 let cursorSendTimer = null;
 const directionController = createDirectionController();
+const history = renderScrubber(historyContainer, slug, {
+  onOpen: () => {
+    editor.readOnly = true;
+    directionToggle.disabled = true;
+    historyOpen?.setAttribute("aria-expanded", "true");
+    historyOpen?.classList.add("is-active");
+  },
+  onClose: () => {
+    editor.readOnly = false;
+    directionToggle.disabled = false;
+    historyOpen?.setAttribute("aria-expanded", "false");
+    historyOpen?.classList.remove("is-active");
+    if (!editor.disabled) editor.focus();
+  },
+});
+
+historyOpen?.addEventListener("click", () => history.toggle());
+void decryptReveal(document.querySelector(".wordmark"), "GOPAD", { duration: 620, frames: 20 });
 
 function loadUsername() {
   let username = "";

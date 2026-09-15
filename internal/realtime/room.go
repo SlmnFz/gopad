@@ -2,12 +2,12 @@ package realtime
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/local/gopad/internal/crdt"
+	"github.com/local/gopad/internal/history"
 	"github.com/local/gopad/internal/store"
 )
 
@@ -79,29 +79,11 @@ func newRoom(hub *Hub, slug string, documentID int64, document *crdt.Document, s
 }
 
 func documentFromLoaded(loaded store.LoadedDocument) (*crdt.Document, error) {
-	document := crdt.New()
-	for _, char := range loaded.Snapshot {
-		if err := document.Apply(crdt.Operation{
-			Type:    crdt.Insert,
-			ID:      char.ID,
-			Value:   char.Value,
-			LeftID:  char.LeftID,
-			RightID: char.RightID,
-		}); err != nil {
-			return nil, fmt.Errorf("apply snapshot insert: %w", err)
-		}
-		if char.Deleted {
-			if err := document.Apply(crdt.Operation{Type: crdt.Delete, ID: char.ID}); err != nil {
-				return nil, fmt.Errorf("apply snapshot tombstone: %w", err)
-			}
-		}
-	}
+	operations := make([]crdt.Operation, 0, len(loaded.Operations))
 	for _, record := range loaded.Operations {
-		if err := document.Apply(record.Operation); err != nil {
-			return nil, fmt.Errorf("replay operation %d: %w", record.Sequence, err)
-		}
+		operations = append(operations, record.Operation)
 	}
-	return document, nil
+	return history.BuildAt(loaded.Snapshot, operations)
 }
 
 func (r *Room) run(ctx context.Context) {

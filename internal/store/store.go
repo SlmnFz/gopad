@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/local/gopad/internal/crdt"
 	_ "modernc.org/sqlite"
@@ -75,6 +76,15 @@ type OperationRecord struct {
 type LoadedDocument struct {
 	Document
 	Operations []OperationRecord
+}
+
+// HistoryBounds describes the durable sequence range available for a
+// document. Sequence zero is the empty document before the first operation.
+type HistoryBounds struct {
+	MinSeq     int64
+	MaxSeq     int64
+	CreatedAt  time.Time
+	CurrentSeq int64
 }
 
 // Open opens or creates a SQLite database and applies the initial schema.
@@ -445,6 +455,202 @@ func (s *Store) LoadDocument(ctx context.Context, slug string) (LoadedDocument, 
 		return LoadedDocument{}, fmt.Errorf("read operations: %w", err)
 	}
 	return loaded, nil
+}
+
+// SnapshotBeforeSeq returns the latest materialized snapshot that is safe to
+// use at seq. The v1 schema keeps one current snapshot, so a request before
+// that snapshot falls back to the empty document and replays the durable log
+// from sequence zero.
+func (s *Store) SnapshotBeforeSeq(slug string, seq int64) ([]crdt.Char, int64, error) {
+	if s == nil || s.readDB == nil {
+		return nil, 0, errors.New("store is not open")
+	}
+	if seq < 0 {
+		seq = 0
+	}
+
+	var snapshotJSON string
+	var snapshotVersion int64
+	err := s.readDB.QueryRowContext(context.Background(), `
+		SELECT snapshot, snapshot_version
+		FROM documents
+		WHERE slug = ?
+	`, slug).Scan(&snapshotJSON, &snapshotVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, 0, fmt.Errorf("slug %q: %w", slug, ErrDocumentNotFound)
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("load history snapshot: %w", err)
+	}
+	if snapshotVersion > seq || strings.TrimSpace(snapshotJSON) == "" {
+		return []crdt.Char{}, 0, nil
+	}
+
+	var chars []crdt.Char
+	if err := json.Unmarshal([]byte(snapshotJSON), &chars); err != nil {
+		return nil, 0, fmt.Errorf("decode history snapshot: %w", err)
+	}
+	if chars == nil {
+		chars = []crdt.Char{}
+	}
+	return chars, snapshotVersion, nil
+}
+
+// OperationsInRange returns the durable operations after fromSeq and through
+// toSeq, ordered by the server-assigned sequence. It deliberately reads the
+// operation log rather than a live room so history requests cannot contend
+// with active editors.
+func (s *Store) OperationsInRange(slug string, fromSeq, toSeq int64) ([]crdt.Operation, error) {
+	if s == nil || s.readDB == nil {
+		return nil, errors.New("store is not open")
+	}
+	if fromSeq < 0 {
+		fromSeq = 0
+	}
+	if toSeq < fromSeq {
+		return []crdt.Operation{}, nil
+	}
+
+	documentID, err := s.historyDocumentID(slug)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.readDB.QueryContext(context.Background(), `
+		SELECT op_type, payload
+		FROM operations
+		WHERE document_id = ? AND sequence > ? AND sequence <= ?
+		ORDER BY sequence ASC
+	`, documentID, fromSeq, toSeq)
+	if err != nil {
+		return nil, fmt.Errorf("load history operations: %w", err)
+	}
+	defer rows.Close()
+
+	operations := make([]crdt.Operation, 0)
+	for rows.Next() {
+		var (
+			opType  string
+			payload string
+			op      crdt.Operation
+		)
+		if err := rows.Scan(&opType, &payload); err != nil {
+			return nil, fmt.Errorf("scan history operation: %w", err)
+		}
+		if err := json.Unmarshal([]byte(payload), &op); err != nil {
+			return nil, fmt.Errorf("decode history operation: %w", err)
+		}
+		if op.Type == "" {
+			op.Type = crdt.OperationType(opType)
+		}
+		operations = append(operations, op)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read history operations: %w", err)
+	}
+	return operations, nil
+}
+
+// HistoryBounds returns the durable sequence range and document creation
+// time used by the history API.
+func (s *Store) HistoryBounds(slug string) (HistoryBounds, error) {
+	if s == nil || s.readDB == nil {
+		return HistoryBounds{}, errors.New("store is not open")
+	}
+
+	var (
+		documentID     int64
+		createdAtValue string
+		snapshotSeq    int64
+		operationMax   sql.NullInt64
+	)
+	err := s.readDB.QueryRowContext(context.Background(), `
+		SELECT id, created_at, snapshot_version
+		FROM documents
+		WHERE slug = ?
+	`, slug).Scan(&documentID, &createdAtValue, &snapshotSeq)
+	if errors.Is(err, sql.ErrNoRows) {
+		return HistoryBounds{}, fmt.Errorf("slug %q: %w", slug, ErrDocumentNotFound)
+	}
+	if err != nil {
+		return HistoryBounds{}, fmt.Errorf("load history bounds: %w", err)
+	}
+	if err := s.readDB.QueryRowContext(context.Background(), `
+		SELECT MAX(sequence)
+		FROM operations
+		WHERE document_id = ?
+	`, documentID).Scan(&operationMax); err != nil {
+		return HistoryBounds{}, fmt.Errorf("load history sequence: %w", err)
+	}
+
+	maxSeq := snapshotSeq
+	if operationMax.Valid && operationMax.Int64 > maxSeq {
+		maxSeq = operationMax.Int64
+	}
+	return HistoryBounds{
+		MinSeq:     0,
+		MaxSeq:     maxSeq,
+		CreatedAt:  parseDatabaseTime(createdAtValue),
+		CurrentSeq: maxSeq,
+	}, nil
+}
+
+// OperationTimestamp returns the durable creation time for one operation.
+// The history handler falls back to the document creation time for sequence
+// zero and for a database that has no timestamp value.
+func (s *Store) OperationTimestamp(slug string, seq int64) (time.Time, error) {
+	if s == nil || s.readDB == nil {
+		return time.Time{}, errors.New("store is not open")
+	}
+	documentID, err := s.historyDocumentID(slug)
+	if err != nil {
+		return time.Time{}, err
+	}
+	var createdAtValue string
+	err = s.readDB.QueryRowContext(context.Background(), `
+		SELECT created_at
+		FROM operations
+		WHERE document_id = ? AND sequence = ?
+	`, documentID, seq).Scan(&createdAtValue)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return time.Time{}, fmt.Errorf("sequence %d: %w", seq, sql.ErrNoRows)
+		}
+		return time.Time{}, fmt.Errorf("load operation timestamp: %w", err)
+	}
+	return parseDatabaseTime(createdAtValue), nil
+}
+
+func (s *Store) historyDocumentID(slug string) (int64, error) {
+	var documentID int64
+	err := s.readDB.QueryRowContext(context.Background(), `
+		SELECT id
+		FROM documents
+		WHERE slug = ?
+	`, slug).Scan(&documentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("slug %q: %w", slug, ErrDocumentNotFound)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("load history document: %w", err)
+	}
+	return documentID, nil
+}
+
+func parseDatabaseTime(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC()
+		}
+	}
+	return time.Time{}
 }
 
 func randomSlug() (string, error) {

@@ -35,12 +35,14 @@
               <option value="rtl">RTL</option>
             </select>
           </label>
+          <button id="history-open" class="history-open-button" type="button" aria-controls="history-scrubber">HISTORY // OPEN</button>
         </div>
         <div class="editor-stage">
           <textarea id="editor" class="editor" aria-label="Document text" dir="auto" placeholder="Start writing…" disabled></textarea>
           <div id="remote-cursors" class="remote-cursors" aria-hidden="true"></div>
         </div>
       </section>
+      <div id="history-scrubber" aria-label="Document history scrubber"></div>
       <footer class="editor-footer" aria-hidden="true">
         <span>LINK-SHARED ACCESS</span>
         <span>SEQUENCE SYNC // ACTIVE</span>

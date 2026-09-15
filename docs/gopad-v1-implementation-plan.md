@@ -602,29 +602,29 @@ git commit -m "feat(crdt): compact stable tombstones after each snapshot cycle"
 **Interfaces:**
 - Consumes: the durable per-document operation log and periodic snapshots from Tasks 3/5/8 — note this reads the *durable op log*, not the in-memory `Document`, so Task 13's tombstone compaction (which only trims in-memory structure, never deletes persisted log rows) has zero effect on how far back history can go
 - Produces: `history.BuildAt(snapshot []crdt.Char, ops []crdt.Operation) (*crdt.Document, error)`, `GET /api/documents/{slug}/history/range`, `GET /api/documents/{slug}/history?seq=N`, `renderScrubber(container, slug)` client-side
-- [ ] **Step 1: Extend the store for historical range queries**
+- [x] **Step 1: Extend the store for historical range queries**
 Add `SnapshotBeforeSeq(slug string, seq int64) (chars []Char, snapSeq int64, err error)` — the most recent persisted snapshot at or before the requested sequence, falling back to an empty document if none exists yet (documents younger than their first snapshot interval) — and `OperationsInRange(slug string, fromSeq, toSeq int64) ([]Operation, error)`. Confirm the `operations` table already has an index on `(document_id, sequence)` from Task 3/5 — if not, add it here, since every history request is a range scan on exactly that shape.
  
-- [ ] **Step 2: Extract a shared replay helper**
+- [x] **Step 2: Extract a shared replay helper**
 `internal/history.BuildAt` takes a snapshot's characters plus the ops after it and returns a reconstructed `*crdt.Document` — this is the exact logic the room already runs once at startup (Task 8) to rehydrate a document, so refactor that into this shared helper rather than duplicating it; the room calls it with `(latest snapshot, ops after it)`, this task calls it with `(nearest snapshot ≤ N, ops between that snapshot and N)`. No new reconstruction logic, just a new caller.
  
-- [ ] **Step 3: Add the history HTTP endpoints**
+- [x] **Step 3: Add the history HTTP endpoints**
 `GET /api/documents/{slug}/history/range` returns `{minSeq, maxSeq, createdAt, currentSeq}` for the scrubber's bounds. `GET /api/documents/{slug}/history?seq=N` clamps `N` into `[minSeq, maxSeq]`, calls `store.SnapshotBeforeSeq` + `store.OperationsInRange` + `history.BuildAt`, and returns `{sequence, timestamp, text}`. This path never touches the live room's in-memory `Document` or its event-loop goroutine — it's a pure read from durable storage, so a burst of scrubbing by one visitor can't contend with or block active editors in that room.
  
-- [ ] **Step 4: Cache and rate-limit replay cost**
+- [x] **Step 4: Cache and rate-limit replay cost**
 Reuse Task 9's cache pattern with a new instance keyed by `(slug, seq)`, short TTL (a scrubber being dragged will re-request nearby sequences repeatedly). Since a request can, worst case, replay up to one full snapshot interval's worth of ops, add a per-IP rate limit on this endpoint alongside whatever general abuse limits exist — this is exactly the kind of amplification path (small request, comparatively expensive server-side work) that's worth capping explicitly rather than assuming good faith.
  
-- [ ] **Step 5: Build the scrubber UI**
+- [x] **Step 5: Build the scrubber UI**
 `history.js`: a slider bound to `[minSeq, maxSeq]` from the range endpoint, debounced (~150ms) fetch to the point endpoint as the user drags, rendering the returned text into a read-only panel visually distinct from the live editor — matching Task 10's terminal theme but with a clearly different treatment (e.g. dimmed/amber tint vs. the live green) so it's never ambiguous whether you're looking at history or the live document. Show the timestamp for the current scrub position and an explicit "return to live" action that unmounts the scrubber and hands focus back to the normal editor.
  
-- [ ] **Step 6: Add tests**
+- [x] **Step 6: Add tests**
 `replay_test.go`: `BuildAt` reconstructs text that exactly matches what the live document produced at that point — the strongest version of this test replays a recorded op sequence from one of Task 11's property-test runs up to step k and asserts it matches a checkpoint taken during that run, tying this feature's correctness directly back to the convergence harness. `history_test.go`: range/point endpoints clamp out-of-bounds `seq` rather than erroring, and a request for a document with no snapshots yet still returns sensible bounds. `history.test.js`: slider drag debounces correctly and clamps to fetched bounds.
  
-- [ ] **Step 7: Verify**
+- [x] **Step 7: Verify**
 Run: `go test -race ./internal/history ./internal/server ./internal/store -v` and `node --test web/assets/*.test.js`.
 Expected: PASS; manually drag the scrubber on a document with real edit history and confirm the rendered text at each point matches what was actually on screen at that time.
  
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 ```bash
 git add internal/store internal/history internal/realtime internal/server internal/cache web
 git commit -m "feat(history): add time-travel scrubber over the operation log"

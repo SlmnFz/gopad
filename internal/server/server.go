@@ -25,6 +25,7 @@ func New(dependencies ...any) http.Handler {
 	})
 
 	var service DocumentService
+	var historyService HistoryService
 	var websocketHandler http.Handler
 	var metricsHandler http.Handler
 	var slugCache *cache.SlugCache
@@ -43,11 +44,15 @@ func New(dependencies ...any) http.Handler {
 		if candidate, ok := dependency.(DocumentService); ok {
 			service = candidate
 		}
+		if candidate, ok := dependency.(HistoryService); ok {
+			historyService = candidate
+		}
 		if candidate, ok := dependency.(http.Handler); ok {
 			websocketHandler = candidate
 		}
 	}
 	registerDocumentRoutes(mux, service, slugCache)
+	registerHistoryRoutes(mux, historyService)
 	if websocketHandler != nil {
 		mux.Handle("GET /ws/{slug}", websocketHandler)
 	}

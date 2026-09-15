@@ -16,7 +16,7 @@
           <span class="brand-subtitle">COLLABORATIVE TEXT NETWORK</span>
         </div>
         <div class="signal-rule" aria-hidden="true"></div>
-        <h1>A shared space for plain text.</h1>
+        <h1 id="landing-title">A shared space for plain text.</h1>
         <p class="lede">Create a document, share its link, and edit together in real time.</p>
         <div class="landing-actions">
           <button id="create-document" class="primary-button" type="button">New document</button>
@@ -38,9 +38,12 @@
         </dl>
       </div>
     </main>
-    <script>
+    <script type="module">
+      import { decryptReveal } from "/assets/decrypt.js";
+
       const button = document.querySelector('#create-document');
       const status = document.querySelector('#status');
+      void decryptReveal(document.querySelector('#landing-title'), 'A shared space for plain text.', { duration: 760, frames: 24 });
       button.addEventListener('click', async () => {
         button.disabled = true;
         status.textContent = 'Creating document…';
