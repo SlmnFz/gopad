@@ -387,20 +387,22 @@ git commit -m "feat(ops): add durable batching metrics and load testing"
 **Interfaces:**
 - Consumes: `store.Store` read paths (`LoadDocument`, slug-existence checks)
 - Produces: `cache.New[K, V](ttl time.Duration, maxEntries int) *Cache[K, V]`, `(*Cache[K, V]).Get(key K) (V, bool)`, `(*Cache[K, V]).Set(key K, value V)`, `(*Cache[K, V]).Delete(key K)`, `(*Cache[K, V]).Len() int`
-- [ ] **Step 1: Implement a generic in-memory TTL cache**
+- [x] **Step 1: Implement a generic in-memory TTL cache**
 A single `internal/cache` package, no external deps. Backing store is a `map[K]entry[V]` guarded by a `sync.RWMutex`, `entry` holds `value V` and `expiresAt time.Time`. `Get` checks expiry lazily on read (an expired-but-not-yet-swept entry is treated as a miss) rather than relying solely on a sweeper. A background goroutine sweeps expired entries every `ttl/2` (bounded, started in `New`, stopped via a `Close()` the caller defers) so a cold cache doesn't grow unbounded from misses that were never re-read. Enforce `maxEntries` with simple oldest-expiry eviction on `Set` — this is a size backstop, not an LRU, so keep the eviction scan O(n) only on the rare overflow path, not the hot path.
  
-- [ ] **Step 2: Wire the cache into the hot lookup paths**
+- [x] **Step 2: Wire the cache into the hot lookup paths**
 Cache two things, each with its own instance and TTL so document-not-found results don't stick around as long as found ones: (a) `GET /d/{slug}` and `GET /ws/{slug}`'s "does this slug exist" check (short TTL, e.g. 5s — this is the per-request path hit on every page load and every reconnect), and (b) nothing from the write path — inserted/edited document *content* is never cached, since the room's in-memory CRDT is already the source of truth for anything live and the cache would just add a staleness bug. On `CreateDocument` success, do not pre-populate the cache; let the next read populate it, keeping the cache dumb (read-through, not write-through).
  
-- [ ] **Step 3: Add cache tests**
+- [x] **Step 3: Add cache tests**
 Cover: `Get` on a missing key returns `(zero, false)`; entries expire after their TTL and are treated as misses even before the sweeper runs; `Set` past `maxEntries` evicts something rather than growing unbounded; concurrent `Get`/`Set` under `-race` don't corrupt state; `Close()` stops the sweeper goroutine (assert via a goroutine-count check or a closed-channel signal, not a sleep-and-hope).
  
 - [ ] **Step 4: Verify**
 Run: `go test -race ./internal/cache ./internal/server ./internal/realtime -v`
 Expected: PASS, including the concurrent cache test under `-race`.
+
+Local non-race verification passes; the Windows host has no GCC for `-race`, so this verification is pending GitHub Actions.
  
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 ```bash
 git add internal/cache internal/server internal/realtime cmd
 git commit -m "feat(cache): add TTL cache for slug-existence lookups"
@@ -477,4 +479,47 @@ Expected: property and regular suites PASS under `-race`; the 60s fuzz run finds
 ```bash
 git add internal/crdt
 git commit -m "test(crdt): add property-based convergence fuzzing and scale benchmarks"
+```
+
+### Task 12: Dockerize gopad and add a Prometheus/Grafana stack
+ 
+**Files:**
+- Create: `Dockerfile`
+- Create: `.dockerignore`
+- Create: `docker-compose.yml`
+- Create: `deploy/prometheus/prometheus.yml`
+- Create: `deploy/grafana/provisioning/datasources/prometheus.yml`
+- Create: `deploy/grafana/provisioning/dashboards/dashboards.yml`
+- Create: `deploy/grafana/dashboards/gopad.json`
+- Modify: `internal/metrics/metrics.go` (only if metric names need aligning with this task's dashboard — see Step 1)
+- Modify: `README.md`
+**Interfaces:**
+- Consumes: `/metrics` and `/healthz` from Task 8, `GOPAD_*` env vars from Tasks 8–9
+- Produces: a `gopad:local` Docker image, `docker compose up` bringing up gopad + Prometheus + Grafana, a provisioned Grafana dashboard
+- [ ] **Step 1: Fix the canonical metric names**
+Before writing any dashboard JSON, pin down the exact Prometheus metric names Task 8 registered (gauges/counter/histograms for active connections, active rooms, operations processed, broadcast latency, write-batch size/latency, write-queue depth, dropped/slow-client count). If Task 8's implementation used ad hoc names, rename them now to a consistent `gopad_` prefix (e.g. `gopad_active_connections`, `gopad_active_rooms`, `gopad_operations_total`, `gopad_broadcast_latency_seconds`, `gopad_write_batch_size`, `gopad_write_batch_latency_seconds`, `gopad_write_queue_depth`, `gopad_dropped_clients_total`) so the dashboard in Step 5 has a stable contract to build against. Write the final list into `internal/metrics/metrics.go`'s doc comment as the source of truth.
+ 
+- [ ] **Step 2: Write the Dockerfile**
+Multi-stage build: a `golang:1.22` builder stage running `CGO_ENABLED=0 go build` (safe since `modernc.org/sqlite` is pure Go per the Tech Stack — no cgo toolchain needed in the image), producing a static binary with `web/` already baked in via the existing `//go:embed` (Task 4) so the final image needs nothing but the binary. Final stage is `gcr.io/distroless/static` (or `scratch` plus a copied CA-cert bundle if any TLS-consuming code needs it later), running as a non-root numeric UID, `EXPOSE 8080`, `ENTRYPOINT ["/gopad"]`. Declare a `VOLUME` at the directory `GOPAD_DB_PATH` defaults to, so the SQLite file survives container recreation. Add `.dockerignore` excluding `.git`, `loadtest/`, `*.md`, and any local `*.db` files to keep the build context small.
+ 
+- [ ] **Step 3: Write docker-compose with gopad, Prometheus, and Grafana**
+Three services on one dedicated bridge network: `gopad` (built from the Dockerfile, `GOPAD_ADDR=:8080` published to the host, a named volume for the SQLite path, `GOPAD_ENABLE_PPROF` left unset/`0` by default since Task 8's constraint is that pprof must never be on the public listener — do not publish a pprof port from compose); `prometheus` (official `prom/prometheus` image, mounts `deploy/prometheus/prometheus.yml` read-only, no published port needed beyond what's used for local debugging); `grafana` (official `grafana/grafana` image, mounts the `deploy/grafana/provisioning/` tree read-only so the datasource and dashboard load automatically with zero manual clicking, publishes `3000` to the host, default admin credentials documented in README as dev-only).
+ 
+- [ ] **Step 4: Configure the Prometheus scrape target**
+`deploy/prometheus/prometheus.yml`: one scrape job named `gopad`, target `gopad:8080`, path `/metrics`, a scrape interval matched to the metric resolution that's actually useful here (15s is plenty given the histogram buckets from Task 8, no need for sub-second scraping on a hobby project).
+ 
+- [ ] **Step 5: Build the Grafana dashboard**
+`deploy/grafana/dashboards/gopad.json`: panels for active connections and active rooms (gauges/time series), operations processed (rate, counter), broadcast/fan-out latency (histogram heatmap or p50/p95/p99 time series via `histogram_quantile`), write-batch size and latency (same treatment), write-queue depth (gauge, since Task 8 explicitly wants a full/backed-up queue visible as a metric rather than silently blocking), and dropped/slow-client count (rate). Reference only the metric names fixed in Step 1. Provisioning YAML (`datasources/prometheus.yml`, `dashboards/dashboards.yml`) points Grafana at the `prometheus` service by its compose network name and auto-loads this dashboard on startup — no manual "add data source" step for anyone cloning the repo.
+ 
+- [ ] **Step 6: Verify the stack end to end**
+Run: `docker compose up --build`, then `curl localhost:8080/healthz`, `curl localhost:8080/metrics` (confirm the Step 1 metric names actually appear), open Prometheus at `localhost:9090/targets` and confirm the `gopad` job is `UP`, open Grafana at `localhost:3000` and confirm the dashboard is present and wired to real data. Generate traffic with the existing `loadtest/websocket.js` (Task 8) against the containerized instance and confirm the dashboard panels move.
+Expected: all four checks pass with no manual configuration beyond `docker compose up`.
+ 
+- [ ] **Step 7: Document it**
+Add a "Running with Docker" section to `README.md`: `docker compose up --build`, the three URLs (app, Prometheus, Grafana), where the SQLite volume lives, and an explicit note that the bundled Grafana admin credentials are for local development only and must be changed before any non-local deployment.
+ 
+- [ ] **Step 8: Commit**
+```bash
+git add Dockerfile .dockerignore docker-compose.yml deploy internal/metrics README.md
+git commit -m "feat(ops): dockerize gopad and add Prometheus/Grafana stack"
 ```

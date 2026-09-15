@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/local/gopad/internal/cache"
 	"github.com/local/gopad/internal/crdt"
 	gopadmetrics "github.com/local/gopad/internal/metrics"
 	"github.com/local/gopad/internal/store"
@@ -54,17 +55,19 @@ type HubConfig struct {
 	SnapshotInterval    time.Duration
 	Writer              PersistenceWriter
 	Metrics             *gopadmetrics.Metrics
+	SlugCache           *cache.SlugCache
 }
 
 // Hub owns the active room registry and shared fan-out workers.
 type Hub struct {
-	store   Store
-	rooms   sync.Map
-	config  HubConfig
-	fanout  *fanoutPool
-	ctx     context.Context
-	writer  PersistenceWriter
-	metrics *gopadmetrics.Metrics
+	store     Store
+	rooms     sync.Map
+	config    HubConfig
+	fanout    *fanoutPool
+	ctx       context.Context
+	writer    PersistenceWriter
+	metrics   *gopadmetrics.Metrics
+	slugCache *cache.SlugCache
 
 	closeOnce sync.Once
 	closeErr  error
@@ -74,6 +77,7 @@ type Hub struct {
 func NewHub(database Store) *Hub {
 	metrics := gopadmetrics.New()
 	snapshotOpThreshold, snapshotInterval := store.SnapshotConfigFromEnv()
+	slugCache := cache.DefaultSlugCache()
 	var writer PersistenceWriter
 	if sqliteStore, ok := database.(*store.Store); ok {
 		writer = store.NewWriterWithConfig(sqliteStore, store.WriterConfigFromEnv(metrics))
@@ -87,6 +91,7 @@ func NewHub(database Store) *Hub {
 		SnapshotInterval:    snapshotInterval,
 		Writer:              writer,
 		Metrics:             metrics,
+		SlugCache:           slugCache,
 	})
 }
 
@@ -113,13 +118,17 @@ func NewHubWithConfig(database Store, config HubConfig) *Hub {
 	if config.Metrics == nil {
 		config.Metrics = gopadmetrics.New()
 	}
+	if config.SlugCache == nil {
+		config.SlugCache = cache.DefaultSlugCache()
+	}
 	return &Hub{
-		store:   database,
-		config:  config,
-		fanout:  newFanoutPool(config.FanoutWorkers, config.FanoutQueueSize),
-		ctx:     context.Background(),
-		writer:  config.Writer,
-		metrics: config.Metrics,
+		store:     database,
+		config:    config,
+		fanout:    newFanoutPool(config.FanoutWorkers, config.FanoutQueueSize),
+		ctx:       context.Background(),
+		writer:    config.Writer,
+		metrics:   config.Metrics,
+		slugCache: config.SlugCache,
 	}
 }
 
@@ -131,11 +140,18 @@ func (h *Hub) GetOrCreateRoom(ctx context.Context, slug string) (*Room, error) {
 	if existing, ok := h.rooms.Load(slug); ok {
 		return existing.(*Room), nil
 	}
+	if exists, cached := h.slugCache.Lookup(slug); cached && !exists {
+		return nil, store.ErrDocumentNotFound
+	}
 
 	loaded, err := h.store.LoadDocument(ctx, slug)
 	if err != nil {
+		if errors.Is(err, store.ErrDocumentNotFound) {
+			h.slugCache.SetMissing(slug)
+		}
 		return nil, err
 	}
+	h.slugCache.SetExists(slug)
 	document, err := documentFromLoaded(loaded)
 	if err != nil {
 		return nil, err
@@ -205,6 +221,9 @@ func (h *Hub) CloseContext(ctx context.Context) error {
 		if h.writer != nil {
 			h.closeErr = h.writer.Close(ctx)
 		}
+		if h.slugCache != nil {
+			h.slugCache.Close()
+		}
 		h.fanout.close()
 	})
 	return h.closeErr
@@ -222,6 +241,14 @@ func (h *Hub) Metrics() *gopadmetrics.Metrics {
 		return nil
 	}
 	return h.metrics
+}
+
+// SlugCache exposes the shared existence cache to the HTTP routes.
+func (h *Hub) SlugCache() *cache.SlugCache {
+	if h == nil {
+		return nil
+	}
+	return h.slugCache
 }
 
 func roomIdleTimeoutFromEnv() time.Duration {

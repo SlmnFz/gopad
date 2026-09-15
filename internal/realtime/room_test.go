@@ -3,10 +3,12 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/local/gopad/internal/cache"
 	"github.com/local/gopad/internal/crdt"
 	"github.com/local/gopad/internal/store"
 )
@@ -17,6 +19,7 @@ type testStore struct {
 	mu       sync.Mutex
 	document store.LoadedDocument
 	appends  []crdt.Operation
+	loads    int
 }
 
 func newTestStore() *testStore {
@@ -41,10 +44,19 @@ func (s *testStore) FindOrCreateUser(_ context.Context, username string) (store.
 }
 
 func (s *testStore) LoadDocument(_ context.Context, slug string) (store.LoadedDocument, error) {
+	s.mu.Lock()
+	s.loads++
+	s.mu.Unlock()
 	if slug != s.document.Slug {
 		return store.LoadedDocument{}, store.ErrDocumentNotFound
 	}
 	return s.document, nil
+}
+
+func (s *testStore) loadCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loads
 }
 
 func (s *testStore) AppendOperations(_ context.Context, _ int64, operations []crdt.Operation) error {
@@ -82,6 +94,28 @@ func TestHub_GetOrCreateRoomIsIdempotentAndEvictsIdleRooms(t *testing.T) {
 	}
 	if _, ok := hub.rooms.Load(testDocumentSlug); ok {
 		t.Fatal("evicted room is still registered in the hub")
+	}
+}
+
+func TestHub_CachesMissingSlugs(t *testing.T) {
+	database := newTestStore()
+	slugCache := cache.NewSlugCache(time.Minute, time.Minute, 8)
+	hub := NewHubWithConfig(database, HubConfig{
+		IdleTimeout:     time.Hour,
+		ClientQueueSize: 4,
+		FanoutQueueSize: 4,
+		FanoutWorkers:   1,
+		SlugCache:       slugCache,
+	})
+	defer hub.Close()
+
+	for range 2 {
+		if _, err := hub.GetOrCreateRoom(context.Background(), "Zzz123456789"); !errors.Is(err, store.ErrDocumentNotFound) {
+			t.Fatalf("GetOrCreateRoom error = %v, want document not found", err)
+		}
+	}
+	if database.loadCount() != 1 {
+		t.Fatalf("missing slug loads = %d, want one cached lookup", database.loadCount())
 	}
 }
 

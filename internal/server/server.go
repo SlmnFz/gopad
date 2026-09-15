@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/local/gopad/internal/cache"
 	"github.com/local/gopad/internal/metrics"
 	"github.com/local/gopad/internal/store"
 )
@@ -26,7 +27,15 @@ func New(dependencies ...any) http.Handler {
 	var service DocumentService
 	var websocketHandler http.Handler
 	var metricsHandler http.Handler
+	var slugCache *cache.SlugCache
 	for _, dependency := range dependencies {
+		if candidate, ok := dependency.(*cache.SlugCache); ok {
+			slugCache = candidate
+			continue
+		}
+		if provider, ok := dependency.(interface{ SlugCache() *cache.SlugCache }); ok {
+			slugCache = provider.SlugCache()
+		}
 		if candidate, ok := dependency.(*metrics.Metrics); ok {
 			metricsHandler = candidate
 			continue
@@ -38,7 +47,7 @@ func New(dependencies ...any) http.Handler {
 			websocketHandler = candidate
 		}
 	}
-	registerDocumentRoutes(mux, service)
+	registerDocumentRoutes(mux, service, slugCache)
 	if websocketHandler != nil {
 		mux.Handle("GET /ws/{slug}", websocketHandler)
 	}

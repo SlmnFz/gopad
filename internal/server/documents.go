@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"regexp"
 
+	"github.com/local/gopad/internal/cache"
 	"github.com/local/gopad/internal/store"
 	"github.com/local/gopad/web"
 )
 
 var documentSlugPattern = regexp.MustCompile(`^[0-9A-Za-z]{12}$`)
 
-func registerDocumentRoutes(mux *http.ServeMux, service DocumentService) {
+func registerDocumentRoutes(mux *http.ServeMux, service DocumentService, slugCache *cache.SlugCache) {
 	assets, err := fs.Sub(web.FS, "assets")
 	if err != nil {
 		panic(err)
@@ -25,7 +26,7 @@ func registerDocumentRoutes(mux *http.ServeMux, service DocumentService) {
 		handleCreateDocument(w, r, service)
 	})
 	mux.HandleFunc("GET /d/{slug}", func(w http.ResponseWriter, r *http.Request) {
-		handleEditorPage(w, r, service)
+		handleEditorPage(w, r, service, slugCache)
 	})
 }
 
@@ -54,20 +55,30 @@ func handleCreateDocument(w http.ResponseWriter, r *http.Request, service Docume
 	}{Slug: document.Slug})
 }
 
-func handleEditorPage(w http.ResponseWriter, r *http.Request, service DocumentService) {
+func handleEditorPage(w http.ResponseWriter, r *http.Request, service DocumentService, slugCache *cache.SlugCache) {
 	slug := r.PathValue("slug")
 	if !documentSlugPattern.MatchString(slug) || service == nil {
 		http.NotFound(w, r)
 		return
 	}
+	if exists, cached := slugCache.Lookup(slug); cached {
+		if !exists {
+			http.NotFound(w, r)
+			return
+		}
+		servePage(w, "editor.html")
+		return
+	}
 	if _, err := service.LoadDocument(r.Context(), slug); err != nil {
 		if errors.Is(err, store.ErrDocumentNotFound) {
+			slugCache.SetMissing(slug)
 			http.NotFound(w, r)
 			return
 		}
 		http.Error(w, "could not load document", http.StatusInternalServerError)
 		return
 	}
+	slugCache.SetExists(slug)
 	servePage(w, "editor.html")
 }
 

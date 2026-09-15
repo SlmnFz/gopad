@@ -9,8 +9,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/local/gopad/internal/cache"
 	"github.com/local/gopad/internal/store"
 )
 
@@ -85,6 +88,61 @@ func TestDocumentRoute_RejectsMalformedAndUnknownSlugs(t *testing.T) {
 		if recorder.Code != http.StatusNotFound {
 			t.Errorf("slug %q: status = %d, want %d", slug, recorder.Code, http.StatusNotFound)
 		}
+	}
+}
+
+type countingDocumentService struct {
+	mu       sync.Mutex
+	document store.LoadedDocument
+	loads    int
+}
+
+func (service *countingDocumentService) CreateDocument(context.Context) (store.Document, error) {
+	return service.document.Document, nil
+}
+
+func (service *countingDocumentService) LoadDocument(_ context.Context, slug string) (store.LoadedDocument, error) {
+	service.mu.Lock()
+	service.loads++
+	service.mu.Unlock()
+	if slug != service.document.Slug {
+		return store.LoadedDocument{}, store.ErrDocumentNotFound
+	}
+	return service.document, nil
+}
+
+func (service *countingDocumentService) loadCount() int {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	return service.loads
+}
+
+func TestDocumentRouteCachesSlugExistence(t *testing.T) {
+	service := &countingDocumentService{document: store.LoadedDocument{Document: store.Document{Slug: "Abc123456789"}}}
+	slugCache := cache.NewSlugCache(time.Minute, time.Minute, 8)
+	defer slugCache.Close()
+	handler := New(service, slugCache)
+
+	for range 2 {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/d/Abc123456789", nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("existing document status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+	}
+	if service.loadCount() != 1 {
+		t.Fatalf("existing slug loads = %d, want 1", service.loadCount())
+	}
+
+	for range 2 {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/d/Zzz123456789", nil))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("missing document status = %d, want %d", recorder.Code, http.StatusNotFound)
+		}
+	}
+	if service.loadCount() != 2 {
+		t.Fatalf("missing slug loads = %d, want one cached miss", service.loadCount())
 	}
 }
 
