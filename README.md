@@ -112,6 +112,7 @@ All settings are optional:
 | --- | --- | --- |
 | GOPAD_DB_PATH | gopad.db | SQLite database path |
 | GOPAD_ADDR | :8080 | Public HTTP and WebSocket listener |
+| GOPAD_LOG_LEVEL | info | Structured log level: debug, info, warn, or error |
 | GOPAD_ROOM_IDLE_TIMEOUT | 45s | Grace period before an idle room is evicted |
 | GOPAD_WRITE_QUEUE_SIZE | 1024 | Maximum queued persistence jobs |
 | GOPAD_OP_BATCH_SIZE | 100 | Operations that trigger a write flush |
