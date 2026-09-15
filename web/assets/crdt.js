@@ -52,6 +52,7 @@ function cloneChar(char) {
     id: cloneCharID(char.id),
     value: char.value,
     leftID: cloneCharID(char.leftID),
+    rightID: cloneCharID(char.rightID),
     deleted: char.deleted,
   };
 }
@@ -82,11 +83,12 @@ export class RgaDocument {
 
     const id = cloneCharID(operation.id);
     const leftID = cloneCharID(operation.leftID);
+    const rightID = cloneCharID(operation.rightID);
     const value = normalizeValue(operation.value);
     const key = charKey(id);
     const existing = this.characters.get(key);
     if (existing) {
-      if (existing.value === value && sameCharID(existing.leftID, leftID)) {
+      if (existing.value === value && sameCharID(existing.leftID, leftID) && sameCharID(existing.rightID, rightID)) {
         return false;
       }
       throw new Error("conflicting duplicate character");
@@ -97,7 +99,10 @@ export class RgaDocument {
         throw new Error("missing parent character");
       }
     }
-    this.characters.set(key, { id, value, leftID, deleted: false });
+    if (rightID !== null && (sameCharID(id, rightID) || sameCharID(leftID, rightID))) {
+      throw new Error("invalid right anchor");
+    }
+    this.characters.set(key, { id, value, leftID, rightID, deleted: false });
     return true;
   }
 
@@ -109,6 +114,7 @@ export class RgaDocument {
         id: char.id,
         value: char.value,
         leftID: char.leftID ?? null,
+        rightID: char.rightID ?? null,
       });
       if (char.deleted) {
         this.apply({ type: "delete", id: char.id });
@@ -128,15 +134,108 @@ export class RgaDocument {
       siblings.sort((left, right) => compareCharID(left.id, right.id));
     }
 
-    const result = [];
+    const base = [];
     const visit = (parentKey) => {
       for (const char of children.get(parentKey) || []) {
-        result.push(cloneChar(char));
+        base.push(char);
         visit(charKey(char.id));
       }
     };
     visit(ROOT_KEY);
-    return result;
+
+    const baseIndex = new Map(base.map((char, index) => [charKey(char.id), index]));
+    const indegree = new Map(base.map((char) => [charKey(char.id), 0]));
+    const edges = new Map(base.map((char) => [charKey(char.id), []]));
+    const addEdge = (fromID, toID) => {
+      if (!fromID || !toID || sameCharID(fromID, toID)) {
+        return;
+      }
+      const fromKey = charKey(fromID);
+      const toKey = charKey(toID);
+      if (!indegree.has(fromKey) || !indegree.has(toKey)) {
+        return;
+      }
+      const outgoing = edges.get(fromKey);
+      if (outgoing.includes(toKey)) {
+        return;
+      }
+      outgoing.push(toKey);
+      indegree.set(toKey, indegree.get(toKey) + 1);
+    };
+    for (const char of base) {
+      addEdge(char.leftID, char.id);
+      addEdge(char.id, char.rightID);
+    }
+
+    const ready = [];
+    const compareReady = (left, right) => baseIndex.get(left) - baseIndex.get(right);
+    const pushReady = (key) => {
+      let index = ready.length;
+      ready.push(key);
+      while (index > 0) {
+        const parent = Math.floor((index - 1) / 2);
+        if (compareReady(ready[parent], key) <= 0) {
+          break;
+        }
+        ready[index] = ready[parent];
+        index = parent;
+      }
+      ready[index] = key;
+    };
+    const popReady = () => {
+      const first = ready[0];
+      const last = ready.pop();
+      if (ready.length > 0) {
+        let index = 0;
+        while (true) {
+          const left = index * 2 + 1;
+          if (left >= ready.length) {
+            break;
+          }
+          const right = left + 1;
+          let child = left;
+          if (right < ready.length && compareReady(ready[right], ready[left]) < 0) {
+            child = right;
+          }
+          if (compareReady(last, ready[child]) <= 0) {
+            break;
+          }
+          ready[index] = ready[child];
+          index = child;
+        }
+        ready[index] = last;
+      }
+      return first;
+    };
+
+    for (const char of base) {
+      if (indegree.get(charKey(char.id)) === 0) {
+        pushReady(charKey(char.id));
+      }
+    }
+    const ordered = [];
+    const seen = new Set();
+    while (ready.length > 0) {
+      const key = popReady();
+      seen.add(key);
+      ordered.push(cloneChar(this.characters.get(key)));
+      for (const child of edges.get(key)) {
+        const nextDegree = indegree.get(child) - 1;
+        indegree.set(child, nextDegree);
+        if (nextDegree === 0) {
+          pushReady(child);
+        }
+      }
+    }
+
+    // Keep the deterministic legacy order for malformed/cyclic anchors.
+    for (const char of base) {
+      const key = charKey(char.id);
+      if (!seen.has(key)) {
+        ordered.push(cloneChar(char));
+      }
+    }
+    return ordered;
   }
 
   visibleCharacters() {
@@ -151,6 +250,12 @@ export class RgaDocument {
     const visible = this.visibleCharacters();
     const boundedOffset = Math.max(0, Math.min(Number(offset) || 0, visible.length));
     return boundedOffset === 0 ? null : cloneCharID(visible[boundedOffset - 1].id);
+  }
+
+  rightIDForVisibleOffset(offset) {
+    const visible = this.visibleCharacters();
+    const boundedOffset = Math.max(0, Math.min(Number(offset) || 0, visible.length));
+    return boundedOffset === visible.length ? null : cloneCharID(visible[boundedOffset].id);
   }
 }
 
@@ -189,10 +294,11 @@ export function createTextOperations(document, previousText, nextText, { siteID,
 
   let nextCounter = counter;
   let leftID = document.leftIDForVisibleOffset(prefix);
+  const rightID = document.rightIDForVisibleOffset(prefix);
   for (const value of next.slice(prefix, nextEnd)) {
     const id = { siteID, counter: nextCounter };
     nextCounter += 1;
-    operations.push({ type: "insert", id, value, leftID: cloneCharID(leftID) });
+    operations.push({ type: "insert", id, value, leftID: cloneCharID(leftID), rightID: cloneCharID(rightID) });
     leftID = id;
   }
 
@@ -206,6 +312,9 @@ export function encodeOperation(operation) {
   };
   if (operation.leftID) {
     wireOperation.leftID = cloneCharID(operation.leftID);
+  }
+  if (operation.rightID) {
+    wireOperation.rightID = cloneCharID(operation.rightID);
   }
   if (operation.type === "insert") {
     wireOperation.value = operation.value.codePointAt(0);

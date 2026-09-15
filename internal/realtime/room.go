@@ -80,10 +80,11 @@ func documentFromLoaded(loaded store.LoadedDocument) (*crdt.Document, error) {
 	document := crdt.New()
 	for _, char := range loaded.Snapshot {
 		if err := document.Apply(crdt.Operation{
-			Type:   crdt.Insert,
-			ID:     char.ID,
-			Value:  char.Value,
-			LeftID: char.LeftID,
+			Type:    crdt.Insert,
+			ID:      char.ID,
+			Value:   char.Value,
+			LeftID:  char.LeftID,
+			RightID: char.RightID,
 		}); err != nil {
 			return nil, fmt.Errorf("apply snapshot insert: %w", err)
 		}

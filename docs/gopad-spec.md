@@ -111,27 +111,37 @@ Char = {
   id:      CharID
   value:   rune
   leftID:  CharID | nil   // ID of the character this was inserted after (nil = start of doc)
+  rightID: CharID | nil   // ID of the character this was inserted before (nil = end of doc)
   deleted: bool            // tombstone flag
 }
 ```
 
 - Each client (site) generates a unique `siteID` on connect.
 - Every character that site inserts gets `(siteID, counter)`, with `counter` incrementing locally per site — this guarantees global uniqueness without coordination.
-- The document is conceptually a linked list of `Char`s, ordered by `leftID` references. Rendering the visible string = walk the list, skip tombstones.
+- The document is a constraint-ordered sequence of `Char`s. `leftID` preserves the
+  insertion's lower bound and `rightID` preserves its upper bound; a nil `rightID`
+  means the insertion is at the end of the current sequence. Rendering the visible
+  string walks the resulting sequence and skips tombstones.
 
 ### 8.2 Delete = tombstone, not removal
 
-Deletes never actually remove a character from the structure — they set `deleted: true`. This preserves position references for any concurrent operation that might still reference that character as a `leftID`. Tombstones accumulate over time; garbage collection is a later optimization (possible here because the server is a central authority that can determine when it's safe to compact — out of scope for v1).
+Deletes never actually remove a character from the structure — they set `deleted: true`. This preserves position references for any concurrent operation that might still reference that character as a `leftID` or `rightID`. Tombstones accumulate over time; garbage collection is a later optimization (possible here because the server is a central authority that can determine when it's safe to compact — out of scope for v1).
 
 ### 8.3 Ordering / tiebreak rule
 
-When two characters are inserted concurrently at the same position (same `leftID`), all replicas must resolve the tie identically. Comparator: sort by `counter` first, then `siteID` as a fixed, consistent tiebreak. Since every replica applies the same comparator to the same set of characters, all replicas converge on an identical linear order regardless of the order operations arrived over the network.
+When two characters are inserted concurrently in the same gap (same `leftID` and
+`rightID`), all replicas must resolve the tie identically. The deterministic base
+ordering uses `counter` first, then `siteID` as a fixed tiebreak; the adjacent
+anchors then constrain each new character to remain in its observed gap. Since
+every replica applies the same constraints to the same set of characters, all
+replicas converge on an identical linear order regardless of operation arrival
+order.
 
 ### 8.4 Wire protocol (operations)
 
 ```json
 // insert
-{ "type": "insert", "id": { "siteID": "...", "counter": 5 }, "value": "x", "leftID": { "siteID": "...", "counter": 4 } }
+{ "type": "insert", "id": { "siteID": "...", "counter": 5 }, "value": "x", "leftID": { "siteID": "...", "counter": 4 }, "rightID": { "siteID": "...", "counter": 6 } }
 
 // delete
 { "type": "delete", "id": { "siteID": "...", "counter": 5 } }
@@ -142,10 +152,14 @@ These are the payloads carried inside the `op` envelope type from the message pr
 ### 8.5 Client-side bookkeeping
 
 The client needs two synchronized views of the document:
-- **Full list**: every `Char` ever inserted, including tombstones, ordered per section 8.3 — this is the actual CRDT state, used to compute `leftID` when the local user types at a given cursor position.
+- **Full list**: every `Char` ever inserted, including tombstones, ordered per section 8.3 — this is the actual CRDT state, used to compute adjacent anchors when the local user types at a given cursor position.
 - **Visible view**: the derived string with tombstones filtered out — this is what actually renders in the editor.
 
-When the local user inserts at screen-position N, the client resolves N to "the CharID currently at visible-position N-1" via the visible view, then emits an `insert` op referencing that ID as `leftID`.
+When the local user inserts at screen-position N, the client resolves N to the
+characters currently at visible positions N-1 and N via the visible view, then
+emits an `insert` op referencing them as `leftID` and `rightID`. This prevents a
+local middle insertion from being reordered after an already-existing sibling
+whose ID happens to sort earlier.
 
 ### 8.6 Why this approach (vs. fractional indexing)
 

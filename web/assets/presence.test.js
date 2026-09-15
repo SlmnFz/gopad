@@ -5,6 +5,7 @@ import { RgaDocument } from "./crdt.js";
 import {
   anchorForVisibleOffset,
   PresenceState,
+  remoteCursorInlinePosition,
   visibleOffsetForAnchor,
 } from "./presence.js";
 
@@ -44,4 +45,15 @@ test("presence snapshots and leave events remove users and cursors", () => {
   });
   assert.equal(presence.collaboratorCount("alice-tab"), 0);
   assert.deepEqual(presence.cursorEntries(), []);
+});
+
+test("remote cursor positions mirror the editor direction", () => {
+  assert.deepEqual(remoteCursorInlinePosition("ltr", 3, {
+    paddingLeft: 8,
+    characterWidth: 10,
+  }), { side: "left", offset: 38 });
+  assert.deepEqual(remoteCursorInlinePosition("rtl", 3, {
+    paddingRight: 12,
+    characterWidth: 10,
+  }), { side: "right", offset: 42 });
 });

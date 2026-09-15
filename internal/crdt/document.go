@@ -1,6 +1,7 @@
 package crdt
 
 import (
+	"container/heap"
 	"errors"
 	"fmt"
 	"sort"
@@ -26,15 +27,17 @@ type Char struct {
 	ID      CharID  `json:"id"`
 	Value   rune    `json:"value"`
 	LeftID  *CharID `json:"leftID,omitempty"`
+	RightID *CharID `json:"rightID,omitempty"`
 	Deleted bool    `json:"deleted"`
 }
 
 // Operation is a CRDT mutation received from a replica.
 type Operation struct {
-	Type   OperationType `json:"type"`
-	ID     CharID        `json:"id"`
-	Value  rune          `json:"value,omitempty"`
-	LeftID *CharID       `json:"leftID,omitempty"`
+	Type    OperationType `json:"type"`
+	ID      CharID        `json:"id"`
+	Value   rune          `json:"value,omitempty"`
+	LeftID  *CharID       `json:"leftID,omitempty"`
+	RightID *CharID       `json:"rightID,omitempty"`
 }
 
 var (
@@ -100,7 +103,7 @@ func (d *Document) Apply(op Operation) error {
 
 func (d *Document) applyInsert(op Operation) error {
 	if existing, ok := d.chars[op.ID]; ok {
-		if existing.Value == op.Value && sameCharID(existing.LeftID, op.LeftID) {
+		if existing.Value == op.Value && sameCharID(existing.LeftID, op.LeftID) && sameCharID(existing.RightID, op.RightID) {
 			return nil
 		}
 		return &ApplyError{Cause: ErrConflictingDuplicate, ID: op.ID}
@@ -113,11 +116,17 @@ func (d *Document) applyInsert(op Operation) error {
 			return &ApplyError{Cause: ErrMissingParent, ID: op.ID, Parent: cloneCharID(op.LeftID)}
 		}
 	}
+	if op.RightID != nil {
+		if op.RightID.SiteID == "" || op.RightID.Counter == 0 || op.ID == *op.RightID || sameCharID(op.LeftID, op.RightID) {
+			return &ApplyError{Cause: ErrInvalidOperation, ID: op.ID, Parent: cloneCharID(op.RightID)}
+		}
+	}
 
 	d.chars[op.ID] = Char{
 		ID:      op.ID,
 		Value:   op.Value,
 		LeftID:  cloneCharID(op.LeftID),
+		RightID: cloneCharID(op.RightID),
 		Deleted: false,
 	}
 	return nil
@@ -169,16 +178,84 @@ func (d *Document) Snapshot() []Char {
 		})
 	}
 
-	result := make([]Char, 0, len(d.chars))
+	base := make([]Char, 0, len(d.chars))
 	var visit func(CharID)
 	visit = func(parent CharID) {
 		for _, char := range children[parent] {
-			result = append(result, char)
+			base = append(base, char)
 			visit(char.ID)
 		}
 	}
 	visit(root)
-	return result
+
+	baseIndex := make(map[CharID]int, len(base))
+	indegree := make(map[CharID]int, len(base))
+	edges := make(map[CharID][]CharID, len(base))
+	for index, char := range base {
+		baseIndex[char.ID] = index
+		indegree[char.ID] = 0
+		edges[char.ID] = nil
+	}
+	addEdge := func(from, to CharID) {
+		if from == to {
+			return
+		}
+		if _, ok := indegree[from]; !ok {
+			return
+		}
+		if _, ok := indegree[to]; !ok {
+			return
+		}
+		for _, existing := range edges[from] {
+			if existing == to {
+				return
+			}
+		}
+		edges[from] = append(edges[from], to)
+		indegree[to]++
+	}
+	for _, char := range base {
+		if char.LeftID != nil {
+			addEdge(*char.LeftID, char.ID)
+		}
+		if char.RightID != nil {
+			addEdge(char.ID, *char.RightID)
+		}
+	}
+
+	ready := &charIDHeap{items: make([]CharID, 0, len(base)), ranks: baseIndex}
+	heap.Init(ready)
+	for _, char := range base {
+		if indegree[char.ID] == 0 {
+			heap.Push(ready, char.ID)
+		}
+	}
+	ordered := make([]Char, 0, len(base))
+	seen := make(map[CharID]struct{}, len(base))
+	for ready.Len() > 0 {
+		id := heap.Pop(ready).(CharID)
+		seen[id] = struct{}{}
+		ordered = append(ordered, cloneChar(d.chars[id]))
+		for _, child := range edges[id] {
+			indegree[child]--
+			if indegree[child] == 0 {
+				heap.Push(ready, child)
+			}
+		}
+	}
+
+	// A malformed or mutually contradictory pair of right anchors should not
+	// make the document disappear. Keep the deterministic legacy order for any
+	// cycle members; valid operations never take this path.
+	if len(ordered) != len(base) {
+		for _, char := range base {
+			if _, ok := seen[char.ID]; ok {
+				continue
+			}
+			ordered = append(ordered, cloneChar(char))
+		}
+	}
+	return ordered
 }
 
 func lessCharID(left, right CharID) bool {
@@ -205,5 +282,32 @@ func cloneCharID(id *CharID) *CharID {
 
 func cloneChar(char Char) Char {
 	char.LeftID = cloneCharID(char.LeftID)
+	char.RightID = cloneCharID(char.RightID)
 	return char
+}
+
+type charIDHeap struct {
+	items []CharID
+	ranks map[CharID]int
+}
+
+func (h charIDHeap) Len() int { return len(h.items) }
+
+func (h charIDHeap) Less(i, j int) bool {
+	return h.ranks[h.items[i]] < h.ranks[h.items[j]]
+}
+
+func (h charIDHeap) Swap(i, j int) {
+	h.items[i], h.items[j] = h.items[j], h.items[i]
+}
+
+func (h *charIDHeap) Push(value any) {
+	h.items = append(h.items, value.(CharID))
+}
+
+func (h *charIDHeap) Pop() any {
+	last := len(h.items) - 1
+	value := h.items[last]
+	h.items = h.items[:last]
+	return value
 }

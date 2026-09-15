@@ -44,6 +44,14 @@ export function visibleOffsetForAnchor(documentState, anchor = {}) {
   return 0;
 }
 
+export function remoteCursorInlinePosition(direction, column, { paddingLeft = 0, paddingRight = paddingLeft, characterWidth = 0 } = {}) {
+  const normalizedColumn = Math.max(0, Number(column) || 0);
+  if (direction === "rtl") {
+    return { side: "right", offset: paddingRight + normalizedColumn * characterWidth };
+  }
+  return { side: "left", offset: paddingLeft + normalizedColumn * characterWidth };
+}
+
 export class PresenceState {
   constructor() {
     this.users = new Map();
@@ -118,24 +126,41 @@ export function renderRemoteCursors(container, textarea, documentState, cursors)
   const fontSize = Number.parseFloat(computed.fontSize) || 16;
   const lineHeight = Number.parseFloat(computed.lineHeight) || fontSize * 1.8;
   const paddingLeft = Number.parseFloat(computed.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(computed.paddingRight) || paddingLeft;
   const paddingTop = Number.parseFloat(computed.paddingTop) || 0;
   const characterWidth = fontSize * 0.6;
   const text = documentState.text();
+  const direction = textarea.dataset.resolvedDirection === "rtl" ? "rtl" : "ltr";
 
   for (const cursor of cursors) {
     const offset = visibleOffsetForAnchor(documentState, cursor.start);
-    const before = text.slice(0, offset);
+    const before = Array.from(text).slice(0, offset).join("");
     const lines = before.split("\n");
     const column = Array.from(lines.at(-1) || "").length;
     const marker = document.createElement("span");
     marker.className = "remote-cursor";
     marker.style.setProperty("--cursor-color", cursor.color || "#4dd8c0");
-    marker.style.left = `${paddingLeft + column * characterWidth - textarea.scrollLeft}px`;
+    const inlinePosition = remoteCursorInlinePosition(direction, column, {
+      paddingLeft,
+      paddingRight,
+      characterWidth,
+    });
+    if (inlinePosition.side === "right") {
+      marker.style.right = `${inlinePosition.offset}px`;
+      marker.style.left = "auto";
+    } else {
+      marker.style.left = `${inlinePosition.offset - textarea.scrollLeft}px`;
+      marker.style.right = "auto";
+    }
     marker.style.top = `${paddingTop + (lines.length - 1) * lineHeight - textarea.scrollTop}px`;
     marker.title = cursor.username || "Collaborator";
 
     const label = document.createElement("span");
     label.className = "remote-cursor-label";
+    if (direction === "rtl") {
+      label.style.right = "0";
+      label.style.left = "auto";
+    }
     label.append(renderAvatar(cursor.username || "Collaborator", 14));
     const username = document.createElement("span");
     username.textContent = cursor.username || "Collaborator";

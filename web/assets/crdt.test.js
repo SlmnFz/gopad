@@ -47,6 +47,27 @@ test("visible offsets map inserts to the previous visible character", () => {
   assert.deepEqual(document.leftIDForVisibleOffset(0), null);
   assert.deepEqual(document.leftIDForVisibleOffset(1), firstID);
   assert.deepEqual(document.leftIDForVisibleOffset(2), secondID);
+  assert.deepEqual(document.rightIDForVisibleOffset(0), firstID);
+  assert.deepEqual(document.rightIDForVisibleOffset(1), secondID);
+  assert.deepEqual(document.rightIDForVisibleOffset(2), null);
+});
+
+test("right anchors preserve insertion before a higher-sorting sibling", () => {
+  const document = new RgaDocument();
+  const firstID = { siteID: "base", counter: 1 };
+  const secondID = { siteID: "base", counter: 2 };
+  document.apply({ type: "insert", id: firstID, value: "A", leftID: null });
+  document.apply({ type: "insert", id: secondID, value: "B", leftID: firstID });
+
+  document.apply({
+    type: "insert",
+    id: { siteID: "editor", counter: 10 },
+    value: "X",
+    leftID: firstID,
+    rightID: secondID,
+  });
+
+  assert.equal(document.text(), "AXB");
 });
 
 test("textarea replacement creates a delete and ordered inserts", () => {
@@ -61,12 +82,19 @@ test("textarea replacement creates a delete and ordered inserts", () => {
     counter: 10,
   });
   assert.deepEqual(operations[0], { type: "delete", id: secondID });
-  assert.deepEqual(operations[1], { type: "insert", id: { siteID: "editor", counter: 10 }, value: "X", leftID: firstID });
+  assert.deepEqual(operations[1], {
+    type: "insert",
+    id: { siteID: "editor", counter: 10 },
+    value: "X",
+    leftID: firstID,
+    rightID: secondID,
+  });
   assert.deepEqual(operations[2], {
     type: "insert",
     id: { siteID: "editor", counter: 11 },
     value: "Y",
     leftID: { siteID: "editor", counter: 10 },
+    rightID: secondID,
   });
   assert.equal(nextCounter, 12);
 

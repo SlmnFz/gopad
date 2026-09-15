@@ -183,7 +183,7 @@ func sameSnapshot(left, right []Char) bool {
 		return false
 	}
 	for index := range left {
-		if left[index].ID != right[index].ID || left[index].Value != right[index].Value || left[index].Deleted != right[index].Deleted || !sameCharID(left[index].LeftID, right[index].LeftID) {
+		if left[index].ID != right[index].ID || left[index].Value != right[index].Value || left[index].Deleted != right[index].Deleted || !sameCharID(left[index].LeftID, right[index].LeftID) || !sameCharID(left[index].RightID, right[index].RightID) {
 			return false
 		}
 	}

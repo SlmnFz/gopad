@@ -49,7 +49,7 @@ CREATE TABLE operations (
     user_id     INTEGER NOT NULL REFERENCES users(id),
     site_id     TEXT NOT NULL,        -- CRDT siteID used for this op's CharIDs (per connection, not per user)
     op_type     TEXT NOT NULL,        -- 'insert' | 'delete'
-    payload     TEXT NOT NULL,        -- JSON: CharID/value/leftID (insert) or target CharID (delete)
+    payload     TEXT NOT NULL,        -- JSON: CharID/value/leftID/rightID (insert) or target CharID (delete)
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     UNIQUE(document_id, sequence)

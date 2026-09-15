@@ -511,6 +511,10 @@ func cloneChars(chars []crdt.Char) []crdt.Char {
 			leftID := *char.LeftID
 			copyOfChars[index].LeftID = &leftID
 		}
+		if char.RightID != nil {
+			rightID := *char.RightID
+			copyOfChars[index].RightID = &rightID
+		}
 	}
 	return copyOfChars
 }

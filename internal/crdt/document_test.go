@@ -59,6 +59,67 @@ func TestDocument_InsertAfterAndTombstoneDelete(t *testing.T) {
 	}
 }
 
+func TestDocument_RightAnchorPreservesMiddleInsertion(t *testing.T) {
+	document := New()
+	a := CharID{SiteID: "base", Counter: 1}
+	b := CharID{SiteID: "base", Counter: 2}
+	inserted := CharID{SiteID: "editor", Counter: 10}
+
+	for _, op := range []Operation{
+		{Type: Insert, ID: a, Value: 'A'},
+		{Type: Insert, ID: b, Value: 'B', LeftID: &a},
+		{Type: Insert, ID: inserted, Value: 'X', LeftID: &a, RightID: &b},
+	} {
+		if err := document.Apply(op); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := document.Text(); got != "AXB" {
+		t.Fatalf("text = %q, want %q", got, "AXB")
+	}
+	snapshot := document.Snapshot()
+	if snapshot[2].RightID != nil {
+		t.Fatalf("right anchor leaked to the final character: %#v", snapshot[2].RightID)
+	}
+}
+
+func TestDocument_RightAnchorsConvergeRegardlessOfArrivalOrder(t *testing.T) {
+	a := CharID{SiteID: "base", Counter: 1}
+	b := CharID{SiteID: "base", Counter: 2}
+	first := Operation{Type: Insert, ID: CharID{SiteID: "z", Counter: 10}, Value: 'X', LeftID: &a, RightID: &b}
+	second := Operation{Type: Insert, ID: CharID{SiteID: "a", Counter: 10}, Value: 'Y', LeftID: &a, RightID: &b}
+
+	left, right := New(), New()
+	for _, op := range []Operation{
+		{Type: Insert, ID: a, Value: 'A'},
+		{Type: Insert, ID: b, Value: 'B', LeftID: &a},
+		first,
+		second,
+	} {
+		if err := left.Apply(op); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, op := range []Operation{
+		{Type: Insert, ID: a, Value: 'A'},
+		{Type: Insert, ID: b, Value: 'B', LeftID: &a},
+		second,
+		first,
+	} {
+		if err := right.Apply(op); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if left.Text() != "AYXB" || right.Text() != left.Text() {
+		t.Fatalf("texts = %q/%q, want %q", left.Text(), right.Text(), "AYXB")
+	}
+	if !reflect.DeepEqual(left.Snapshot(), right.Snapshot()) {
+		t.Fatalf("snapshots diverged: %#v != %#v", left.Snapshot(), right.Snapshot())
+	}
+}
+
 func TestDocument_DuplicateIDsAreIdempotentButConflictsFail(t *testing.T) {
 	document := New()
 	op := Operation{Type: Insert, ID: CharID{SiteID: "site", Counter: 1}, Value: 'A'}
