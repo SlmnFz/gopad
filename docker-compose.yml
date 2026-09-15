@@ -1,0 +1,52 @@
+services:
+  gopad:
+    build:
+      context: .
+    image: gopad:local
+    environment:
+      GOPAD_ADDR: ":8080"
+      GOPAD_DB_PATH: /data/gopad.db
+      GOPAD_ENABLE_PPROF: "0"
+    ports:
+      - "8080:8080"
+    volumes:
+      - gopad-data:/data
+    networks:
+      - gopad
+
+  prometheus:
+    image: prom/prometheus:v2.53.5
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - gopad
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - gopad
+
+volumes:
+  gopad-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  gopad:
+    driver: bridge

@@ -57,6 +57,7 @@ func TestStaticRoutes_ServeLandingEditorAndAssets(t *testing.T) {
 		{name: "landing", path: "/", want: "New document"},
 		{name: "editor", path: "/d/" + document.Slug, want: "Gopad editor"},
 		{name: "style", path: "/assets/style.css", want: ".page-shell"},
+		{name: "logo", path: "/assets/gopad-logo.svg", want: "Gopad mark"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

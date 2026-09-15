@@ -65,3 +65,27 @@ jobs:
 
       - name: Run bounded CRDT fuzzing
         run: go test ./internal/crdt -fuzz=FuzzTwoReplicaConverge -fuzztime=60s
+
+  docker:
+    name: Docker Compose smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Start the local observability stack
+        run: docker compose up --build --detach
+
+      - name: Check application, metrics, Prometheus, and Grafana
+        run: |
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:8080/healthz
+          metrics="$(curl --fail --retry 10 --retry-delay 2 http://127.0.0.1:8080/metrics)"
+          echo "$metrics"
+          echo "$metrics" | grep -q 'gopad_operations_total'
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:9090/-/ready
+          curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:3000/api/health
+
+      - name: Stop the local observability stack
+        if: always()
+        run: docker compose down --volumes

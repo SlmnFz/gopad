@@ -34,6 +34,18 @@ func (histogram *histogram) observe(value float64) {
 // Metrics is the process-wide observability state for one Gopad server.
 // Values are exported directly in Prometheus text format to avoid a runtime
 // dependency for this intentionally small service.
+//
+// Prometheus metric names are the public observability contract:
+//
+//   - gopad_active_connections (gauge)
+//   - gopad_active_rooms (gauge)
+//   - gopad_operations_total (counter)
+//   - gopad_dropped_clients_total (counter)
+//   - gopad_write_queue_dropped_total (counter)
+//   - gopad_write_queue_depth (gauge)
+//   - gopad_broadcast_latency_seconds (histogram)
+//   - gopad_write_batch_size (histogram)
+//   - gopad_write_batch_latency_seconds (histogram)
 type Metrics struct {
 	mu sync.Mutex
 

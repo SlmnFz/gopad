@@ -500,29 +500,31 @@ git commit -m "test(crdt): add property-based convergence fuzzing and scale benc
 **Interfaces:**
 - Consumes: `/metrics` and `/healthz` from Task 8, `GOPAD_*` env vars from Tasks 8–9
 - Produces: a `gopad:local` Docker image, `docker compose up` bringing up gopad + Prometheus + Grafana, a provisioned Grafana dashboard
-- [ ] **Step 1: Fix the canonical metric names**
+- [x] **Step 1: Fix the canonical metric names**
 Before writing any dashboard JSON, pin down the exact Prometheus metric names Task 8 registered (gauges/counter/histograms for active connections, active rooms, operations processed, broadcast latency, write-batch size/latency, write-queue depth, dropped/slow-client count). If Task 8's implementation used ad hoc names, rename them now to a consistent `gopad_` prefix (e.g. `gopad_active_connections`, `gopad_active_rooms`, `gopad_operations_total`, `gopad_broadcast_latency_seconds`, `gopad_write_batch_size`, `gopad_write_batch_latency_seconds`, `gopad_write_queue_depth`, `gopad_dropped_clients_total`) so the dashboard in Step 5 has a stable contract to build against. Write the final list into `internal/metrics/metrics.go`'s doc comment as the source of truth.
  
-- [ ] **Step 2: Write the Dockerfile**
+- [x] **Step 2: Write the Dockerfile**
 Multi-stage build: a `golang:1.22` builder stage running `CGO_ENABLED=0 go build` (safe since `modernc.org/sqlite` is pure Go per the Tech Stack — no cgo toolchain needed in the image), producing a static binary with `web/` already baked in via the existing `//go:embed` (Task 4) so the final image needs nothing but the binary. Final stage is `gcr.io/distroless/static` (or `scratch` plus a copied CA-cert bundle if any TLS-consuming code needs it later), running as a non-root numeric UID, `EXPOSE 8080`, `ENTRYPOINT ["/gopad"]`. Declare a `VOLUME` at the directory `GOPAD_DB_PATH` defaults to, so the SQLite file survives container recreation. Add `.dockerignore` excluding `.git`, `loadtest/`, `*.md`, and any local `*.db` files to keep the build context small.
  
-- [ ] **Step 3: Write docker-compose with gopad, Prometheus, and Grafana**
+- [x] **Step 3: Write docker-compose with gopad, Prometheus, and Grafana**
 Three services on one dedicated bridge network: `gopad` (built from the Dockerfile, `GOPAD_ADDR=:8080` published to the host, a named volume for the SQLite path, `GOPAD_ENABLE_PPROF` left unset/`0` by default since Task 8's constraint is that pprof must never be on the public listener — do not publish a pprof port from compose); `prometheus` (official `prom/prometheus` image, mounts `deploy/prometheus/prometheus.yml` read-only, no published port needed beyond what's used for local debugging); `grafana` (official `grafana/grafana` image, mounts the `deploy/grafana/provisioning/` tree read-only so the datasource and dashboard load automatically with zero manual clicking, publishes `3000` to the host, default admin credentials documented in README as dev-only).
  
-- [ ] **Step 4: Configure the Prometheus scrape target**
+- [x] **Step 4: Configure the Prometheus scrape target**
 `deploy/prometheus/prometheus.yml`: one scrape job named `gopad`, target `gopad:8080`, path `/metrics`, a scrape interval matched to the metric resolution that's actually useful here (15s is plenty given the histogram buckets from Task 8, no need for sub-second scraping on a hobby project).
  
-- [ ] **Step 5: Build the Grafana dashboard**
+- [x] **Step 5: Build the Grafana dashboard**
 `deploy/grafana/dashboards/gopad.json`: panels for active connections and active rooms (gauges/time series), operations processed (rate, counter), broadcast/fan-out latency (histogram heatmap or p50/p95/p99 time series via `histogram_quantile`), write-batch size and latency (same treatment), write-queue depth (gauge, since Task 8 explicitly wants a full/backed-up queue visible as a metric rather than silently blocking), and dropped/slow-client count (rate). Reference only the metric names fixed in Step 1. Provisioning YAML (`datasources/prometheus.yml`, `dashboards/dashboards.yml`) points Grafana at the `prometheus` service by its compose network name and auto-loads this dashboard on startup — no manual "add data source" step for anyone cloning the repo.
  
 - [ ] **Step 6: Verify the stack end to end**
 Run: `docker compose up --build`, then `curl localhost:8080/healthz`, `curl localhost:8080/metrics` (confirm the Step 1 metric names actually appear), open Prometheus at `localhost:9090/targets` and confirm the `gopad` job is `UP`, open Grafana at `localhost:3000` and confirm the dashboard is present and wired to real data. Generate traffic with the existing `loadtest/websocket.js` (Task 8) against the containerized instance and confirm the dashboard panels move.
 Expected: all four checks pass with no manual configuration beyond `docker compose up`.
+
+Verification so far: `go test ./...`, `go vet ./...`, browser tests, YAML/JSON parsing, and static logo validation pass. Docker is unavailable on the local Windows host; the GitHub Actions Docker Compose smoke-test job will perform the containerized health, metrics, Prometheus, and Grafana checks.
  
-- [ ] **Step 7: Document it**
+- [x] **Step 7: Document it**
 Add a "Running with Docker" section to `README.md`: `docker compose up --build`, the three URLs (app, Prometheus, Grafana), where the SQLite volume lives, and an explicit note that the bundled Grafana admin credentials are for local development only and must be changed before any non-local deployment.
  
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 ```bash
 git add Dockerfile .dockerignore docker-compose.yml deploy internal/metrics README.md
 git commit -m "feat(ops): dockerize gopad and add Prometheus/Grafana stack"

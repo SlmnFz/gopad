@@ -1,0 +1,11 @@
+.git
+.github
+.codebase-memory
+docs
+loadtest
+*.md
+*.db
+*.db-shm
+*.db-wal
+**/*_test.go
+internal/crdt/testdata

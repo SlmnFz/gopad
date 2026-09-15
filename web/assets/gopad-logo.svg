@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Gopad mark</title>
+  <desc id="desc">A phosphor-green G inside a terminal grid.</desc>
+  <rect width="256" height="256" rx="28" fill="#05080a"/>
+  <path d="M28 64h200M28 128h200M28 192h200M64 28v200M128 28v200M192 28v200" stroke="#16211f" stroke-width="4"/>
+  <path d="M184 78c-14-18-34-27-59-27-45 0-78 31-78 77s33 77 78 77c25 0 45-8 59-25v-50h-63v24h35v16c-8 7-18 10-30 10-28 0-47-20-47-52s19-52 47-52c15 0 27 5 36 17z" fill="#4dd8c0"/>
+  <circle cx="28" cy="28" r="6" fill="#72f6b8"/>
+  <circle cx="228" cy="228" r="6" fill="#2d936f"/>
+</svg>
