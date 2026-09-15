@@ -11,10 +11,12 @@ COPY web ./web
 
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/gopad ./cmd/gopad
+RUN mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /out/gopad /gopad
+COPY --from=builder --chown=65532:65532 /out/data /data
 
 ENV GOPAD_ADDR=:8080 \
     GOPAD_DB_PATH=/data/gopad.db

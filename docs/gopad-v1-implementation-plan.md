@@ -519,7 +519,7 @@ Three services on one dedicated bridge network: `gopad` (built from the Dockerfi
 Run: `docker compose up --build`, then `curl localhost:8080/healthz`, `curl localhost:8080/metrics` (confirm the Step 1 metric names actually appear), open Prometheus at `localhost:9090/targets` and confirm the `gopad` job is `UP`, open Grafana at `localhost:3000` and confirm the dashboard is present and wired to real data. Generate traffic with the existing `loadtest/websocket.js` (Task 8) against the containerized instance and confirm the dashboard panels move.
 Expected: all four checks pass with no manual configuration beyond `docker compose up`.
 
-Verification so far: `go test ./...`, `go vet ./...`, browser tests, YAML/JSON parsing, and static logo validation pass. Docker is unavailable on the local Windows host; the GitHub Actions Docker Compose smoke-test job will perform the containerized health, metrics, Prometheus, and Grafana checks.
+Verification so far: `go test ./...`, `go vet ./...`, browser tests, YAML/JSON parsing, and static logo validation pass. Docker is unavailable on the local Windows host. The first GitHub Actions Docker smoke-test attempt failed before `/healthz` responded; the image now initializes the persistent `/data` volume for its non-root user, and the workflow prints Compose logs on future failures.
  
 - [x] **Step 7: Document it**
 Add a "Running with Docker" section to `README.md`: `docker compose up --build`, the three URLs (app, Prometheus, Grafana), where the SQLite volume lives, and an explicit note that the bundled Grafana admin credentials are for local development only and must be changed before any non-local deployment.
