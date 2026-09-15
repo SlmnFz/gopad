@@ -344,12 +344,12 @@ Confirm the room idle-eviction default from Task 5 (`GOPAD_ROOM_IDLE_TIMEOUT`, 4
 
 With a fake executor and fake clock: assert flush fires at 100 ops or 250ms; snapshot fires at 1,000 ops or 30s; multiple rapid snapshot triggers coalesce into one in-flight write; a full/backed-up queue surfaces as a metric rather than blocking the room loop; shutdown waits for the final flush to complete before returning.
 
-- [ ] **Step 4: Verify batching and shutdown**
+- [x] **Step 4: Verify batching and shutdown**
 
 Run: `go test -race ./internal/store ./internal/realtime ./internal/server -v`
 Expected: PASS.
 
-Focused non-race tests pass locally; the Windows environment has no GCC for `-race`, so the race-enabled verification remains a GitHub Actions gate.
+Focused non-race tests pass locally, and the race-enabled verification passed in GitHub Actions with CGO enabled.
 
 - [x] **Step 5: Add metrics and profiling**
 
@@ -359,12 +359,12 @@ Record active connections/rooms (gauges), operations processed (counter), broadc
 
 `loadtest/websocket.js` (k6): create documents, connect a configurable number of virtual users, emit timestamped edits at human-like intervals, and check round-trip receipt latency against a threshold. Document `GOPAD_DB_PATH`, `GOPAD_ADDR`, `GOPAD_ROOM_IDLE_TIMEOUT`, `GOPAD_ENABLE_PPROF`, load-test thresholds, development commands, and the username-only trust model (per `gopad-schema.md` §1 — usernames are claims, not authenticated identities) in `README.md`.
 
-- [ ] **Step 7: Run the final quality gate**
+- [x] **Step 7: Run the final quality gate**
 
 Run: `gofmt -w cmd internal && go test -race ./... && go vet ./... && node --test web/assets/*.test.js`
 Expected: every command passes with no race reports.
 
-Local Go, vet, and browser checks pass; the local `go test -race ./...` invocation is blocked by the missing Windows GCC toolchain and is left for CI.
+Local Go, vet, and browser checks pass; GitHub Actions also passed the race-enabled Go quality gate with CGO enabled.
 
 Run locally: `go run ./cmd/gopad`, then `k6 run loadtest/websocket.js`.
 Expected: health and metrics endpoints respond, collaborative edits converge, and the configured latency thresholds pass.
