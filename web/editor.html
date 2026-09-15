@@ -6,13 +6,29 @@
     <title>Gopad editor</title>
     <link rel="stylesheet" href="/assets/style.css">
   </head>
-  <body>
+  <body class="site-body">
     <main class="page-shell editor-shell">
       <header class="editor-header">
-        <a class="wordmark" href="/">Gopad</a>
-        <p id="connection-status" class="status" role="status">Preparing editor…</p>
+        <div class="brand-lockup">
+          <a class="wordmark" href="/">GOPAD</a>
+          <span class="brand-subtitle">LIVE TEXT NODE</span>
+        </div>
+        <div class="connection-cluster">
+          <span class="connection-indicator" aria-hidden="true"></span>
+          <p id="connection-status" class="status" role="status">Preparing editor…</p>
+        </div>
       </header>
-      <textarea id="editor" class="editor" aria-label="Document text" placeholder="Start writing…" disabled></textarea>
+      <section class="editor-panel" aria-label="Collaborative document">
+        <div class="panel-bar" aria-hidden="true">
+          <span>DOCUMENT CHANNEL</span>
+          <span>/// ENCRYPTION: NONE / V1</span>
+        </div>
+        <textarea id="editor" class="editor" aria-label="Document text" placeholder="Start writing…" disabled></textarea>
+      </section>
+      <footer class="editor-footer" aria-hidden="true">
+        <span>LINK-SHARED ACCESS</span>
+        <span>SEQUENCE SYNC // ACTIVE</span>
+      </footer>
     </main>
     <script type="module" src="/assets/app.js"></script>
   </body>

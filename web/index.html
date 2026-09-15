@@ -6,13 +6,35 @@
     <title>Gopad — collaborative plain text</title>
     <link rel="stylesheet" href="/assets/style.css">
   </head>
-  <body>
+  <body class="site-body">
     <main class="page-shell landing">
-      <p class="eyebrow">Gopad</p>
-      <h1>A shared space for plain text.</h1>
-      <p class="lede">Create a document, share its link, and edit together in real time.</p>
-      <button id="create-document" class="primary-button" type="button">New document</button>
-      <p id="status" class="status" role="status"></p>
+      <div class="landing-card">
+        <div class="brand-lockup">
+          <p class="eyebrow">NODE // GOPAD</p>
+          <span class="brand-subtitle">COLLABORATIVE TEXT NETWORK</span>
+        </div>
+        <div class="signal-rule" aria-hidden="true"></div>
+        <h1>A shared space for plain text.</h1>
+        <p class="lede">Create a document, share its link, and edit together in real time.</p>
+        <div class="landing-actions">
+          <button id="create-document" class="primary-button" type="button">New document</button>
+          <p id="status" class="status" role="status"></p>
+        </div>
+        <dl class="telemetry" aria-label="Gopad system information">
+          <div>
+            <dt>ACCESS</dt>
+            <dd>LINK-SHARED</dd>
+          </div>
+          <div>
+            <dt>MODE</dt>
+            <dd>PLAIN TEXT</dd>
+          </div>
+          <div>
+            <dt>SYNC</dt>
+            <dd>LIVE / CRDT</dd>
+          </div>
+        </dl>
+      </div>
     </main>
     <script>
       const button = document.querySelector('#create-document');
