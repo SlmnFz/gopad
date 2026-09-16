@@ -60,6 +60,21 @@ Concurrent siblings use deterministic (counter, siteID) ordering, so replicas
 converge regardless of delivery order. Deletes create tombstones instead of
 removing character identity.
 
+## Screenshots
+
+Gopad keeps the live editing surface quiet and readable, then switches to an
+amber archive treatment when you inspect the operation history. These are
+captures from the running application, not mockups.
+
+<p align="center">
+  <img src="docs/screenshots/editor-live.png" alt="Gopad live collaborative editor" width="49%">
+  <img src="docs/screenshots/history-scrubber.png" alt="Gopad operation history scrubber" width="49%">
+</p>
+
+The project’s visual direction is intentionally terminal-noir: near-black
+surfaces, teal collaboration signals, and amber history controls inspired by
+surveillance interfaces while keeping the editor practical.
+
 ## Quick start
 
 Requirements: Go 1.22 or newer.
